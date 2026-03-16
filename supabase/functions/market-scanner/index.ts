@@ -22,25 +22,38 @@ serve(async (req) => {
     if (!FINNHUB_API_KEY) throw new Error("FINNHUB_API_KEY not configured");
 
     // Fetch quotes for all pairs
-    const quotes = await Promise.all(
-      PAIRS.map(async (pair) => {
-        try {
-          const res = await fetch(
-            `https://finnhub.io/api/v1/quote?symbol=${pair.symbol}&token=${FINNHUB_API_KEY}`
-          );
-          const data = await res.json();
-          const change = data.c && data.pc ? ((data.c - data.pc) / data.pc * 100).toFixed(2) : "0.00";
-          return {
-            pair: pair.display,
-            price: data.c?.toFixed(data.c > 100 ? 2 : 4) || "—",
-            change: parseFloat(change) >= 0 ? `+${change}%` : `${change}%`,
-            raw: data,
-          };
-        } catch {
-          return { pair: pair.display, price: "—", change: "0.00%", raw: null };
-        }
-      })
-    );
+    // Fetch forex rates using Finnhub forex/rates endpoint
+    let forexRates: Record<string, number> = {};
+    try {
+      const ratesRes = await fetch(`https://finnhub.io/api/v1/forex/rates?base=USD&token=${FINNHUB_API_KEY}`);
+      const ratesData = await ratesRes.json();
+      if (ratesData.quote) forexRates = ratesData.quote;
+    } catch (e) {
+      console.error("Forex rates fetch failed:", e);
+    }
+
+    const quotes = PAIRS.map((pair) => {
+      const [base, quote] = pair.display.split("/");
+      let price = "—";
+      let change = "0.00";
+
+      if (base === "XAU" && forexRates["XAU"]) {
+        // Gold: XAU rate is per oz in USD
+        const rate = 1 / forexRates["XAU"];
+        price = rate.toFixed(2);
+      } else if (base === "USD" && forexRates[quote]) {
+        price = forexRates[quote].toFixed(4);
+      } else if (forexRates[base] && forexRates[quote]) {
+        const cross = forexRates[quote] / forexRates[base];
+        price = cross > 100 ? cross.toFixed(3) : cross.toFixed(4);
+      }
+
+      return {
+        pair: pair.display,
+        price,
+        change: `+${change}%`, // Finnhub free tier doesn't provide change data on forex
+      };
+    });
 
     // Fetch forex news
     let news: any[] = [];
