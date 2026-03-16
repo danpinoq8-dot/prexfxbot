@@ -1,13 +1,41 @@
-const tickerData = [
-  { pair: "EUR/USD", price: "1.0842", change: "+0.12%" },
-  { pair: "GBP/JPY", price: "191.340", change: "-0.08%" },
-  { pair: "XAU/USD", price: "2,341.50", change: "+0.34%" },
-  { pair: "USD/JPY", price: "157.220", change: "+0.05%" },
-  { pair: "GBP/USD", price: "1.2714", change: "-0.03%" },
-  { pair: "AUD/USD", price: "0.6621", change: "+0.11%" },
-];
+import { useState, useEffect } from "react";
+
+interface TickerItem {
+  pair: string;
+  price: string;
+  change: string;
+}
+
+const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
 
 const PriceTicker = () => {
+  const [tickerData, setTickerData] = useState<TickerItem[]>([
+    { pair: "EUR/USD", price: "—", change: "0.00%" },
+    { pair: "GBP/JPY", price: "—", change: "0.00%" },
+    { pair: "XAU/USD", price: "—", change: "0.00%" },
+    { pair: "USD/JPY", price: "—", change: "0.00%" },
+    { pair: "GBP/USD", price: "—", change: "0.00%" },
+    { pair: "AUD/USD", price: "—", change: "0.00%" },
+  ]);
+
+  useEffect(() => {
+    const fetchPrices = async () => {
+      try {
+        const res = await fetch(SCANNER_URL, {
+          headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        });
+        const data = await res.json();
+        if (data.quotes) setTickerData(data.quotes);
+      } catch (e) {
+        console.error("Ticker fetch failed:", e);
+      }
+    };
+
+    fetchPrices();
+    const interval = setInterval(fetchPrices, 30000); // refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
+
   const items = [...tickerData, ...tickerData];
 
   return (
