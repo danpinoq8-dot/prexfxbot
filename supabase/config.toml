@@ -1,1 +1,10 @@
 project_id = "phlfebhlnburivjvvzeu"
+
+[functions.prexi-chat]
+verify_jwt = false
+
+[functions.trade-engine]
+verify_jwt = false
+
+[functions.market-scanner]
+verify_jwt = false

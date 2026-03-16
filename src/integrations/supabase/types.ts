@@ -14,7 +14,158 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      bot_config: {
+        Row: {
+          balance: number
+          daily_pnl: number
+          id: string
+          is_active: boolean
+          last_scan_at: string | null
+          max_risk_percent: number
+          news_blackout_active: boolean
+          pairs_watched: string[]
+          updated_at: string
+        }
+        Insert: {
+          balance?: number
+          daily_pnl?: number
+          id?: string
+          is_active?: boolean
+          last_scan_at?: string | null
+          max_risk_percent?: number
+          news_blackout_active?: boolean
+          pairs_watched?: string[]
+          updated_at?: string
+        }
+        Update: {
+          balance?: number
+          daily_pnl?: number
+          id?: string
+          is_active?: boolean
+          last_scan_at?: string | null
+          max_risk_percent?: number
+          news_blackout_active?: boolean
+          pairs_watched?: string[]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      chat_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          role: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+        }
+        Relationships: []
+      }
+      trade_signals: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          executed: boolean
+          finnhub_data: Json | null
+          gemini_analysis: string | null
+          id: string
+          pair: string
+          reasoning: string | null
+          signal: string
+          trade_id: string | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          executed?: boolean
+          finnhub_data?: Json | null
+          gemini_analysis?: string | null
+          id?: string
+          pair: string
+          reasoning?: string | null
+          signal: string
+          trade_id?: string | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          executed?: boolean
+          finnhub_data?: Json | null
+          gemini_analysis?: string | null
+          id?: string
+          pair?: string
+          reasoning?: string | null
+          signal?: string
+          trade_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trade_signals_trade_id_fkey"
+            columns: ["trade_id"]
+            isOneToOne: false
+            referencedRelation: "trades"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trades: {
+        Row: {
+          closed_at: string | null
+          created_at: string
+          deriv_contract_id: string | null
+          direction: string
+          entry_price: number | null
+          exit_price: number | null
+          id: string
+          pair: string
+          profit_loss: number | null
+          signal_reason: string | null
+          stake: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          closed_at?: string | null
+          created_at?: string
+          deriv_contract_id?: string | null
+          direction: string
+          entry_price?: number | null
+          exit_price?: number | null
+          id?: string
+          pair: string
+          profit_loss?: number | null
+          signal_reason?: string | null
+          stake?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          closed_at?: string | null
+          created_at?: string
+          deriv_contract_id?: string | null
+          direction?: string
+          entry_price?: number | null
+          exit_price?: number | null
+          id?: string
+          pair?: string
+          profit_loss?: number | null
+          signal_reason?: string | null
+          stake?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
