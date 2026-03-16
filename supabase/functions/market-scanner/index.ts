@@ -6,12 +6,12 @@ const corsHeaders = {
 };
 
 const PAIRS = [
-  { symbol: "OANDA:EUR_USD", display: "EUR/USD" },
-  { symbol: "OANDA:GBP_JPY", display: "GBP/JPY" },
-  { symbol: "OANDA:XAU_USD", display: "XAU/USD" },
-  { symbol: "OANDA:USD_JPY", display: "USD/JPY" },
-  { symbol: "OANDA:GBP_USD", display: "GBP/USD" },
-  { symbol: "OANDA:AUD_USD", display: "AUD/USD" },
+  { symbol: "EUR/USD", forex: true, display: "EUR/USD" },
+  { symbol: "GBP/JPY", forex: true, display: "GBP/JPY" },
+  { symbol: "XAU/USD", forex: true, display: "XAU/USD" },
+  { symbol: "USD/JPY", forex: true, display: "USD/JPY" },
+  { symbol: "GBP/USD", forex: true, display: "GBP/USD" },
+  { symbol: "AUD/USD", forex: true, display: "AUD/USD" },
 ];
 
 serve(async (req) => {
