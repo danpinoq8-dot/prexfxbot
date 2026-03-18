@@ -79,6 +79,7 @@ export type Database = {
           finnhub_data: Json | null
           gemini_analysis: string | null
           id: string
+          oanda_data: Json | null
           pair: string
           reasoning: string | null
           signal: string
@@ -91,6 +92,7 @@ export type Database = {
           finnhub_data?: Json | null
           gemini_analysis?: string | null
           id?: string
+          oanda_data?: Json | null
           pair: string
           reasoning?: string | null
           signal: string
@@ -103,6 +105,7 @@ export type Database = {
           finnhub_data?: Json | null
           gemini_analysis?: string | null
           id?: string
+          oanda_data?: Json | null
           pair?: string
           reasoning?: string | null
           signal?: string
@@ -120,6 +123,10 @@ export type Database = {
       }
       trades: {
         Row: {
+          broker: string | null
+          broker_order_id: string | null
+          broker_payload: Json | null
+          broker_trade_id: string | null
           closed_at: string | null
           created_at: string
           deriv_contract_id: string | null
@@ -127,14 +134,22 @@ export type Database = {
           entry_price: number | null
           exit_price: number | null
           id: string
+          instrument: string | null
           pair: string
           profit_loss: number | null
           signal_reason: string | null
           stake: number
           status: string
+          stop_loss: number | null
+          take_profit: number | null
+          units: number | null
           updated_at: string
         }
         Insert: {
+          broker?: string | null
+          broker_order_id?: string | null
+          broker_payload?: Json | null
+          broker_trade_id?: string | null
           closed_at?: string | null
           created_at?: string
           deriv_contract_id?: string | null
@@ -142,14 +157,22 @@ export type Database = {
           entry_price?: number | null
           exit_price?: number | null
           id?: string
+          instrument?: string | null
           pair: string
           profit_loss?: number | null
           signal_reason?: string | null
           stake?: number
           status?: string
+          stop_loss?: number | null
+          take_profit?: number | null
+          units?: number | null
           updated_at?: string
         }
         Update: {
+          broker?: string | null
+          broker_order_id?: string | null
+          broker_payload?: Json | null
+          broker_trade_id?: string | null
           closed_at?: string | null
           created_at?: string
           deriv_contract_id?: string | null
@@ -157,11 +180,15 @@ export type Database = {
           entry_price?: number | null
           exit_price?: number | null
           id?: string
+          instrument?: string | null
           pair?: string
           profit_loss?: number | null
           signal_reason?: string | null
           stake?: number
           status?: string
+          stop_loss?: number | null
+          take_profit?: number | null
+          units?: number | null
           updated_at?: string
         }
         Relationships: []
