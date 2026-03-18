@@ -5,83 +5,84 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const OANDA_API = "https://api-fxpractice.oanda.com";
+
 const PAIRS = [
-  { deriv: "frxEURUSD", display: "EUR/USD" },
-  { deriv: "frxGBPJPY", display: "GBP/JPY" },
-  { deriv: "frxXAUUSD", display: "XAU/USD" },
-  { deriv: "frxUSDJPY", display: "USD/JPY" },
-  { deriv: "frxGBPUSD", display: "GBP/USD" },
-  { deriv: "frxAUDUSD", display: "AUD/USD" },
+  { instrument: "EUR_USD", display: "EUR/USD" },
+  { instrument: "GBP_JPY", display: "GBP/JPY" },
+  { instrument: "XAU_USD", display: "XAU/USD" },
+  { instrument: "USD_JPY", display: "USD/JPY" },
+  { instrument: "GBP_USD", display: "GBP/USD" },
+  { instrument: "AUD_USD", display: "AUD/USD" },
 ];
-
-// Get a single tick from Deriv WebSocket
-function getDerivTick(appId: string, symbol: string): Promise<{ price: number; change: string }> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
-    const timeout = setTimeout(() => { ws.close(); reject(new Error("timeout")); }, 8000);
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ ticks: symbol }));
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      clearTimeout(timeout);
-      ws.close();
-
-      if (data.error) {
-        reject(new Error(data.error.message));
-        return;
-      }
-
-      if (data.tick) {
-        resolve({
-          price: data.tick.quote,
-          change: "+0.00%", // single tick, no previous close available
-        });
-      }
-    };
-
-    ws.onerror = () => {
-      clearTimeout(timeout);
-      reject(new Error("ws error"));
-    };
-  });
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const DERIV_APP_ID = Deno.env.get("DERIV_APP_ID");
+    const OANDA_API_TOKEN = Deno.env.get("OANDA_API_TOKEN");
+    const OANDA_ACCOUNT_ID = Deno.env.get("OANDA_ACCOUNT_ID");
     const FINNHUB_API_KEY = Deno.env.get("FINNHUB_API_KEY");
-    if (!DERIV_APP_ID) throw new Error("DERIV_APP_ID not configured");
 
-    // Fetch live prices from Deriv
+    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID) throw new Error("OANDA credentials not configured");
+
+    // Fetch live prices from OANDA
+    const instruments = PAIRS.map(p => p.instrument).join(",");
+    const pricingRes = await fetch(
+      `${OANDA_API}/v3/accounts/${OANDA_ACCOUNT_ID}/pricing?instruments=${instruments}`,
+      { headers: { Authorization: `Bearer ${OANDA_API_TOKEN}` } }
+    );
+
+    if (!pricingRes.ok) {
+      const errText = await pricingRes.text();
+      throw new Error(`OANDA pricing error [${pricingRes.status}]: ${errText}`);
+    }
+
+    const pricingData = await pricingRes.json();
+
+    // Also fetch candles for daily change calculation
     const quotes = await Promise.all(
       PAIRS.map(async (pair) => {
+        const priceEntry = pricingData.prices?.find((p: any) => p.instrument === pair.instrument);
+        if (!priceEntry) return { pair: pair.display, price: "—", change: "0.00%" };
+
+        const bid = parseFloat(priceEntry.bids?.[0]?.price || "0");
+        const ask = parseFloat(priceEntry.asks?.[0]?.price || "0");
+        const mid = (bid + ask) / 2;
+        const isLarge = mid > 100;
+        const decimals = isLarge ? 2 : (mid < 10 ? 5 : 4);
+
+        // Get daily change from candles
+        let change = "0.00%";
         try {
-          const tick = await getDerivTick(DERIV_APP_ID, pair.deriv);
-          const isLarge = tick.price > 100;
-          return {
-            pair: pair.display,
-            price: isLarge ? tick.price.toFixed(2) : tick.price.toFixed(tick.price < 10 ? 5 : 4),
-            change: tick.change,
-          };
-        } catch (e) {
-          console.error(`Failed ${pair.display}:`, e);
-          return { pair: pair.display, price: "—", change: "0.00%" };
-        }
+          const candleRes = await fetch(
+            `${OANDA_API}/v3/instruments/${pair.instrument}/candles?count=2&granularity=D&price=M`,
+            { headers: { Authorization: `Bearer ${OANDA_API_TOKEN}` } }
+          );
+          if (candleRes.ok) {
+            const candleData = await candleRes.json();
+            const candles = candleData.candles || [];
+            if (candles.length >= 2) {
+              const prevClose = parseFloat(candles[candles.length - 2].mid.c);
+              const pct = ((mid - prevClose) / prevClose * 100).toFixed(2);
+              change = parseFloat(pct) >= 0 ? `+${pct}%` : `${pct}%`;
+            }
+          }
+        } catch { /* skip change calc */ }
+
+        return {
+          pair: pair.display,
+          price: mid.toFixed(decimals),
+          change,
+        };
       })
     );
 
-    // Fetch forex news from Finnhub (this works on free tier)
+    // Fetch forex news from Finnhub
     let news: any[] = [];
     if (FINNHUB_API_KEY) {
       try {
-        const newsRes = await fetch(
-          `https://finnhub.io/api/v1/news?category=forex&token=${FINNHUB_API_KEY}`
-        );
+        const newsRes = await fetch(`https://finnhub.io/api/v1/news?category=forex&token=${FINNHUB_API_KEY}`);
         const newsData = await newsRes.json();
         if (Array.isArray(newsData)) {
           news = newsData.slice(0, 10).map((n: any) => ({
@@ -92,9 +93,7 @@ serve(async (req) => {
             datetime: n.datetime,
           }));
         }
-      } catch (e) {
-        console.error("News fetch failed:", e);
-      }
+      } catch (e) { console.error("News fetch failed:", e); }
     }
 
     return new Response(JSON.stringify({ quotes, news, fetched_at: new Date().toISOString() }), {
