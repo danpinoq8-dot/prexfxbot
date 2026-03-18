@@ -26,7 +26,42 @@ serve(async (req) => {
 
     if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID) throw new Error("OANDA credentials not configured");
 
-    // Fetch live prices from OANDA
+    const url = new URL(req.url);
+    const mode = url.searchParams.get("mode"); // "candles" or default (prices)
+
+    // CANDLES MODE
+    if (mode === "candles") {
+      const instrument = url.searchParams.get("instrument") || "XAU_USD";
+      const granularity = url.searchParams.get("granularity") || "H1";
+      const count = url.searchParams.get("count") || "48";
+
+      const candleRes = await fetch(
+        `${OANDA_API}/v3/instruments/${instrument}/candles?count=${count}&granularity=${granularity}&price=M`,
+        { headers: { Authorization: `Bearer ${OANDA_API_TOKEN}` } }
+      );
+
+      if (!candleRes.ok) {
+        const errText = await candleRes.text();
+        throw new Error(`OANDA candle error [${candleRes.status}]: ${errText}`);
+      }
+
+      const data = await candleRes.json();
+      const candles = (data.candles || []).map((c: any) => ({
+        time: c.time,
+        o: parseFloat(c.mid.o),
+        h: parseFloat(c.mid.h),
+        l: parseFloat(c.mid.l),
+        c: parseFloat(c.mid.c),
+        volume: c.volume,
+        complete: c.complete,
+      }));
+
+      return new Response(JSON.stringify({ candles, instrument, granularity }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // DEFAULT: PRICES MODE
     const instruments = PAIRS.map(p => p.instrument).join(",");
     const pricingRes = await fetch(
       `${OANDA_API}/v3/accounts/${OANDA_ACCOUNT_ID}/pricing?instruments=${instruments}`,
@@ -40,7 +75,6 @@ serve(async (req) => {
 
     const pricingData = await pricingRes.json();
 
-    // Also fetch candles for daily change calculation
     const quotes = await Promise.all(
       PAIRS.map(async (pair) => {
         const priceEntry = pricingData.prices?.find((p: any) => p.instrument === pair.instrument);
@@ -52,7 +86,6 @@ serve(async (req) => {
         const isLarge = mid > 100;
         const decimals = isLarge ? 2 : (mid < 10 ? 5 : 4);
 
-        // Get daily change from candles
         let change = "0.00%";
         try {
           const candleRes = await fetch(
@@ -68,17 +101,12 @@ serve(async (req) => {
               change = parseFloat(pct) >= 0 ? `+${pct}%` : `${pct}%`;
             }
           }
-        } catch { /* skip change calc */ }
+        } catch { /* skip */ }
 
-        return {
-          pair: pair.display,
-          price: mid.toFixed(decimals),
-          change,
-        };
+        return { pair: pair.display, price: mid.toFixed(decimals), change };
       })
     );
 
-    // Fetch forex news from Finnhub
     let news: any[] = [];
     if (FINNHUB_API_KEY) {
       try {

@@ -13,7 +13,7 @@ interface Candle {
   c: number;
 }
 
-const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/oanda-candles`;
+const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
 
 const ChartPanel = () => {
   const [selectedPair, setSelectedPair] = useState("XAU_USD");
@@ -24,9 +24,10 @@ const ChartPanel = () => {
     const fetchCandles = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${SCANNER_URL}?instrument=${selectedPair}&granularity=H1&count=48`, {
-          headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-        });
+        const res = await fetch(
+          `${SCANNER_URL}?mode=candles&instrument=${selectedPair}&granularity=H1&count=48`,
+          { headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` } }
+        );
         const data = await res.json();
         if (data.candles) setCandles(data.candles);
       } catch (e) {
@@ -39,7 +40,6 @@ const ChartPanel = () => {
     return () => clearInterval(interval);
   }, [selectedPair]);
 
-  // Simple candlestick rendering
   const renderChart = () => {
     if (candles.length === 0) return null;
     const highs = candles.map(c => c.h);
@@ -109,7 +109,7 @@ const ChartPanel = () => {
         ) : candles.length > 0 ? (
           renderChart()
         ) : (
-          <p className="text-[10px] text-muted-foreground italic">No candle data available — market may be closed</p>
+          <p className="text-[10px] text-muted-foreground italic">No candle data — market may be closed</p>
         )}
       </div>
     </div>
