@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.market-scanner]
 verify_jwt = false
+
+[functions.oanda-candles]
+verify_jwt = false
