@@ -1,46 +1,41 @@
 import { useState, useEffect } from "react";
-import { X, Shield, Eye, EyeOff } from "lucide-react";
+import { X, Shield, Wifi, WifiOff } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-const KEY_STORAGE = "prexfx_api_keys";
-
-interface ApiKeys {
-  deriv: string;
-  finnhub: string;
-  gemini: string;
-}
-
 const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
-  const [keys, setKeys] = useState<ApiKeys>({ deriv: "", finnhub: "", gemini: "" });
-  const [showKeys, setShowKeys] = useState({ deriv: false, finnhub: false, gemini: false });
-  const [saved, setSaved] = useState(false);
+  const [config, setConfig] = useState<any>(null);
+  const [connectionStatus, setConnectionStatus] = useState<"checking" | "connected" | "error">("checking");
 
   useEffect(() => {
-    const stored = localStorage.getItem(KEY_STORAGE);
-    if (stored) {
-      try {
-        setKeys(JSON.parse(stored));
-      } catch { /* ignore */ }
-    }
-  }, []);
+    if (!open) return;
+    const fetchConfig = async () => {
+      const { data } = await supabase
+        .from("bot_config")
+        .select("*")
+        .limit(1)
+        .single();
+      if (data) setConfig(data);
+    };
+    fetchConfig();
 
-  const handleSave = () => {
-    localStorage.setItem(KEY_STORAGE, JSON.stringify(keys));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+    // Test OANDA connection via market-scanner
+    setConnectionStatus("checking");
+    fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`, {
+      headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+    })
+      .then(res => {
+        if (res.ok) setConnectionStatus("connected");
+        else setConnectionStatus("error");
+      })
+      .catch(() => setConnectionStatus("error"));
+  }, [open]);
 
   if (!open) return null;
-
-  const fields: { key: keyof ApiKeys; label: string; placeholder: string }[] = [
-    { key: "deriv", label: "Deriv App ID / API Token", placeholder: "Enter your Deriv API token..." },
-    { key: "finnhub", label: "Finnhub API Key", placeholder: "Enter your Finnhub API key..." },
-    { key: "gemini", label: "Gemini API Key", placeholder: "Enter your Gemini API key..." },
-  ];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -50,7 +45,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
           <div className="flex items-center gap-2">
             <Shield size={16} className="text-foreground" />
             <h2 className="text-sm font-bold tracking-widest uppercase text-foreground">
-              API Configuration
+              System Status
             </h2>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -58,41 +53,63 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
           </button>
         </div>
 
-        <p className="text-[10px] text-muted-foreground mb-6 leading-relaxed">
-          Keys are stored locally on your device. They are used to connect PrexFx to your trading infrastructure.
-        </p>
-
+        {/* OANDA Connection */}
         <div className="space-y-4">
-          {fields.map(({ key, label, placeholder }) => (
-            <div key={key}>
-              <label className="text-[10px] uppercase tracking-widest text-muted-foreground block mb-1.5">
-                {label}
-              </label>
-              <div className="relative">
-                <input
-                  type={showKeys[key] ? "text" : "password"}
-                  value={keys[key]}
-                  onChange={(e) => setKeys((prev) => ({ ...prev, [key]: e.target.value }))}
-                  placeholder={placeholder}
-                  className="w-full bg-secondary/50 border border-border rounded-lg px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-prexfx-silver transition-colors font-mono"
-                />
-                <button
-                  onClick={() => setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showKeys[key] ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
+          <div className="p-4 rounded-xl bg-secondary/30 border border-border">
+            <div className="flex items-center gap-2 mb-2">
+              {connectionStatus === "connected" ? (
+                <Wifi size={14} className="text-prexfx-profit" />
+              ) : connectionStatus === "error" ? (
+                <WifiOff size={14} className="text-prexfx-loss" />
+              ) : (
+                <Wifi size={14} className="text-muted-foreground animate-pulse" />
+              )}
+              <span className="text-[10px] uppercase tracking-widest text-foreground font-bold">
+                OANDA Broker
+              </span>
             </div>
-          ))}
+            <p className="text-[10px] text-muted-foreground">
+              {connectionStatus === "connected"
+                ? "Connected — Live pricing and execution active"
+                : connectionStatus === "error"
+                ? "Connection failed — Check OANDA credentials"
+                : "Checking connection..."}
+            </p>
+          </div>
+
+          {config && (
+            <>
+              <div className="p-4 rounded-xl bg-secondary/30 border border-border">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Account</p>
+                <p className="text-lg font-extralight text-foreground">
+                  ${Number(config.balance).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-secondary/30 border border-border">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Risk Settings</p>
+                <p className="text-xs text-foreground">Max risk per trade: {config.max_risk_percent}%</p>
+                <p className="text-xs text-foreground mt-1">Bot: {config.is_active ? "🟢 Active" : "🔴 Inactive"}</p>
+                <p className="text-xs text-foreground mt-1">News Blackout: {config.news_blackout_active ? "Active" : "Clear"}</p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-secondary/30 border border-border">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Watched Pairs</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(config.pairs_watched || []).map((p: string) => (
+                    <span key={p} className="text-[9px] px-2 py-1 rounded bg-accent text-accent-foreground">
+                      {p.replace("_", "/")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
-        <button
-          onClick={handleSave}
-          className="w-full mt-6 py-2.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold uppercase tracking-widest hover:bg-prexfx-silver-bright transition-colors"
-        >
-          {saved ? "✓ Saved" : "Save Configuration"}
-        </button>
+        <p className="text-[9px] text-muted-foreground mt-4 text-center">
+          API keys are securely stored on the server — not in your browser
+        </p>
       </div>
     </div>
   );
