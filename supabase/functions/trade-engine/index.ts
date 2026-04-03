@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const OANDA_API = "https://api-fxpractice.oanda.com"; // practice account
+const OANDA_API = "https://api-fxpractice.oanda.com";
 
 const INSTRUMENTS: Record<string, string> = {
   "XAU_USD": "XAU/USD",
@@ -38,14 +38,14 @@ serve(async (req) => {
   try {
     const OANDA_API_TOKEN = Deno.env.get("OANDA_API_TOKEN");
     const OANDA_ACCOUNT_ID = Deno.env.get("OANDA_ACCOUNT_ID");
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
     const FINNHUB_API_KEY = Deno.env.get("FINNHUB_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!OANDA_API_TOKEN) throw new Error("OANDA_API_TOKEN not configured");
     if (!OANDA_ACCOUNT_ID) throw new Error("OANDA_ACCOUNT_ID not configured");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY not configured");
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error("Supabase not configured");
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -105,7 +105,7 @@ serve(async (req) => {
       } catch (e) { console.error("News fetch failed:", e); }
     }
 
-    // 4. BRAIN: Ask AI for trade decision
+    // 4. BRAIN: Ask Groq for trade decision
     const brainPrompt = `You are PREXI Brain, an autonomous forex trading AI. Analyze this LIVE OANDA data and decide what to trade.
 
 LIVE OANDA PRICES:
@@ -127,6 +127,7 @@ RULES:
 - Only signal BUY or SELL if confidence > 70%
 - Calculate appropriate units based on risk amount and stop loss distance
 - Set stop_loss and take_profit levels for every trade signal
+- IMPORTANT: You already have ${account.openTradeCount} open trades. Be cautious about opening too many positions.
 
 Respond with EXACTLY this JSON (no markdown):
 {
@@ -145,21 +146,22 @@ Respond with EXACTLY this JSON (no markdown):
   "market_summary": "1-2 sentence overview"
 }`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${GROQ_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: brainPrompt }],
+        temperature: 0.3,
       }),
     });
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      throw new Error(`AI gateway error [${aiResponse.status}]: ${errText}`);
+      throw new Error(`Groq API error [${aiResponse.status}]: ${errText}`);
     }
 
     const aiResult = await aiResponse.json();
