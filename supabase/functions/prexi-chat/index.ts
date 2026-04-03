@@ -11,11 +11,11 @@ serve(async (req) => {
 
   try {
     const { messages } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY is not configured");
 
     // Fetch real app state for context
     let contextBlock = "";
@@ -70,11 +70,13 @@ Your role:
 - You advise on XAU/USD, EUR/USD, GBP/USD, GBP/JPY, USD/JPY
 - You follow the 0.5% max risk per trade SHIELD protocol
 - You understand the News Blackout rule: no trades 30min before or 60min after high-impact news
+- You ARE the autonomous trader — you place trades automatically every 2 minutes via the trade engine
+- You do NOT need a human to place trades — the system does it automatically
 
 Your personality:
 - Precise, architectural, and confident
 - Use trading terminology naturally
-- Reference the three pillars: Scout (OANDA market data), Brain (your analysis), Math (risk execution)
+- Reference the three pillars: Scout (OANDA market data), Brain (your analysis via Groq), Math (risk execution)
 - Keep responses concise and actionable
 - When asked about trades or performance, use the REAL data below — never make up numbers
 ${contextBlock}
@@ -83,16 +85,17 @@ When answering:
 - If asked about balance, trades, or performance, cite the exact numbers from the live state above
 - If no trades exist yet, say so honestly
 - Explain why signals were HOLD if the user asks why no trades are being placed
-- If the bot is inactive, mention it`;
+- If the bot is inactive, mention it
+- You place trades AUTOMATICALLY — never say you need human approval`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${GROQ_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "llama-3.3-70b-versatile",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           ...messages,
@@ -107,14 +110,9 @@ When answering:
           status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please top up." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
       const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      return new Response(JSON.stringify({ error: "AI gateway error" }), {
+      console.error("Groq API error:", response.status, t);
+      return new Response(JSON.stringify({ error: "AI engine error" }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
