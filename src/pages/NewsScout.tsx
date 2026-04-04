@@ -1,87 +1,131 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import SentimentGauge from "@/components/prexfx/SentimentGauge";
-import { AlertTriangle, Clock, Shield } from "lucide-react";
+import { AlertTriangle, Clock, Shield, RefreshCw, ExternalLink } from "lucide-react";
 
-interface EconomicEvent {
-  id: number;
-  flag: string;
-  currency: string;
-  event: string;
-  time: string;
-  countdown: string;
-  impact: "red" | "orange" | "yellow";
-}
-
-const upcomingEvents: EconomicEvent[] = [
-  { id: 1, flag: "🇺🇸", currency: "USD", event: "Non-Farm Payrolls (NFP)", time: "8:30 AM EST", countdown: "2h 15m", impact: "red" },
-  { id: 2, flag: "🇬🇧", currency: "GBP", event: "Bank of England Rate Decision", time: "12:00 PM GMT", countdown: "5h 45m", impact: "red" },
-  { id: 3, flag: "🇪🇺", currency: "EUR", event: "CPI Flash Estimate", time: "10:00 AM CET", countdown: "3h 30m", impact: "orange" },
-  { id: 4, flag: "🇯🇵", currency: "JPY", event: "Trade Balance", time: "11:50 PM JST", countdown: "14h 20m", impact: "yellow" },
-];
+const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
 
 const NewsScout = () => {
-  const [sentimentValue] = useState(68);
+  const [news, setNews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastFetch, setLastFetch] = useState<string | null>(null);
+
+  const fetchNews = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(SCANNER_URL, {
+        headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+      });
+      const data = await res.json();
+      if (data.news && Array.isArray(data.news)) {
+        setNews(data.news);
+      }
+      setLastFetch(data.fetched_at || new Date().toISOString());
+    } catch (e) {
+      console.error("News fetch failed:", e);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchNews();
+    const interval = setInterval(fetchNews, 120000); // refresh every 2 min
+    return () => clearInterval(interval);
+  }, []);
+
+  const timeSince = (timestamp: number) => {
+    const now = Date.now() / 1000;
+    const diff = now - timestamp;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  // Simple sentiment from headlines
+  const bullishWords = ["rally", "surge", "gain", "rise", "bullish", "growth", "strong", "high", "up"];
+  const bearishWords = ["fall", "drop", "crash", "decline", "bearish", "weak", "low", "down", "loss"];
+  let bullCount = 0, bearCount = 0;
+  news.forEach(n => {
+    const h = (n.headline || "").toLowerCase();
+    bullishWords.forEach(w => { if (h.includes(w)) bullCount++; });
+    bearishWords.forEach(w => { if (h.includes(w)) bearCount++; });
+  });
+  const total = bullCount + bearCount || 1;
+  const sentimentValue = Math.round((bullCount / total) * 100);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
-      <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-        News Scout — Global Sentiment Monitor
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+          News Scout — Live Forex News
+        </h2>
+        <button onClick={fetchNews} disabled={loading} className="flex items-center gap-1.5 text-[9px] text-muted-foreground hover:text-foreground transition-colors">
+          <RefreshCw size={10} className={loading ? "animate-spin" : ""} />
+          {lastFetch ? `Updated ${new Date(lastFetch).toLocaleTimeString()}` : "Refresh"}
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-        {/* Sentiment Gauge */}
         <SentimentGauge value={sentimentValue} />
 
-        {/* Blackout Status */}
         <div className="glass-panel rounded-2xl p-6 flex flex-col items-center justify-center gap-3">
-          <Shield size={24} className="text-prexfx-profit" />
+          <Shield size={24} className={sentimentValue > 30 && sentimentValue < 70 ? "text-prexfx-profit" : "text-destructive-foreground"} />
           <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            News Blackout Status
+            Market Sentiment
           </p>
-          <p className="text-sm font-bold text-prexfx-profit tracking-widest">
-            CLEAR — TRADING ACTIVE
+          <p className={`text-sm font-bold tracking-widest ${sentimentValue >= 50 ? "text-prexfx-profit" : "text-prexfx-loss"}`}>
+            {sentimentValue >= 60 ? "BULLISH" : sentimentValue <= 40 ? "BEARISH" : "NEUTRAL"}
           </p>
-          <p className="text-[9px] text-muted-foreground">
-            No red folder events in the next 30 minutes
+          <p className="text-[9px] text-muted-foreground text-center">
+            Based on {news.length} live Finnhub headlines
           </p>
         </div>
       </div>
 
-      {/* Red Folder Events */}
+      {/* Live News Feed */}
       <div className="glass-panel rounded-xl p-4">
         <div className="flex items-center gap-2 mb-4">
-          <AlertTriangle size={14} className="text-destructive-foreground" />
+          <AlertTriangle size={14} className="text-muted-foreground" />
           <h3 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold">
-            Red Folder Alerts — Upcoming Events
+            Live News Feed — Finnhub
           </h3>
         </div>
 
         <div className="space-y-2.5">
-          {upcomingEvents.map((evt) => (
-            <div
-              key={evt.id}
-              className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
-                evt.impact === "red"
-                  ? "bg-destructive/10 border-destructive/20"
-                  : evt.impact === "orange"
-                  ? "bg-accent/50 border-accent"
-                  : "bg-secondary/30 border-border"
-              }`}
+          {loading && news.length === 0 && (
+            <p className="text-[9px] text-muted-foreground animate-pulse">Fetching live news from Finnhub...</p>
+          )}
+          {!loading && news.length === 0 && (
+            <p className="text-[9px] text-muted-foreground italic">No news available — Finnhub API may be offline</p>
+          )}
+          {news.map((n, i) => (
+            <a
+              key={i}
+              href={n.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 p-3 rounded-lg bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors"
             >
-              <span className="text-lg">{evt.flag}</span>
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-foreground font-medium truncate">
-                  {evt.currency} — {evt.event}
+                <p className="text-[10px] text-foreground font-medium leading-relaxed">
+                  {n.headline}
                 </p>
-                <p className="text-[9px] text-muted-foreground">{evt.time}</p>
+                {n.summary && (
+                  <p className="text-[9px] text-muted-foreground mt-1 line-clamp-2">
+                    {n.summary}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-[8px] text-muted-foreground">{n.source}</span>
+                  {n.datetime && (
+                    <span className="text-[8px] text-muted-foreground flex items-center gap-1">
+                      <Clock size={8} />
+                      {timeSince(n.datetime)}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Clock size={10} className="text-muted-foreground" />
-                <span className={`text-[10px] font-bold ${evt.impact === "red" ? "text-destructive-foreground" : "text-foreground"}`}>
-                  {evt.countdown}
-                </span>
-              </div>
-            </div>
+              <ExternalLink size={10} className="text-muted-foreground shrink-0 mt-1" />
+            </a>
           ))}
         </div>
       </div>
