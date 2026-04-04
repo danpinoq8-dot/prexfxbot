@@ -119,7 +119,7 @@ const PrexiTerminal = () => {
       {/* Header */}
       <div className="p-4 border-b border-border">
         <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          Prexi AI Terminal — Gemini Brain
+          Prexi AI Terminal — Groq Brain
         </h2>
         <p className="text-[9px] text-muted-foreground mt-1">
           Ask about market sentiment, strategy, or trade analysis

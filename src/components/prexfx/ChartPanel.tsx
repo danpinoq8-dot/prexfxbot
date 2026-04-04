@@ -36,7 +36,7 @@ const ChartPanel = () => {
       setLoading(false);
     };
     fetchCandles();
-    const interval = setInterval(fetchCandles, 60000);
+    const interval = setInterval(fetchCandles, 15000); // refresh every 15s like MT5
     return () => clearInterval(interval);
   }, [selectedPair]);
 

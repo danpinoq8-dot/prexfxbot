@@ -7,23 +7,26 @@ const TradeVaultPanel = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchTrades = async () => {
       const { data } = await supabase
         .from("trades")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(5);
+        .limit(10);
       if (data) setTrades(data);
     };
-    fetch();
+    fetchTrades();
 
     const channel = supabase
       .channel("vault-trades")
-      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchTrades())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  const openTrades = trades.filter(t => t.status === "open");
+  const closedTrades = trades.filter(t => t.status === "closed");
 
   return (
     <div className="glass-panel rounded-xl p-4">
@@ -32,16 +35,18 @@ const TradeVaultPanel = () => {
           Trade Vault
         </h3>
         <span className="text-[8px] uppercase tracking-widest text-muted-foreground">
-          OANDA
+          {openTrades.length} OPEN | {closedTrades.length} CLOSED
         </span>
       </div>
 
       <div className="space-y-2">
         {trades.length === 0 && (
-          <p className="text-[9px] text-muted-foreground italic">No trades yet — bot will execute when signals are strong</p>
+          <p className="text-[9px] text-muted-foreground italic">No trades yet</p>
         )}
         {trades.map((t) => {
-          const isProfit = (t.profit_loss || 0) > 0;
+          const pl = t.profit_loss || 0;
+          const isProfit = pl > 0;
+          const isOpen = t.status === "open";
           return (
             <button
               key={t.id}
@@ -49,29 +54,28 @@ const TradeVaultPanel = () => {
               className="w-full text-left p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
             >
               <div className="flex items-start gap-2">
-                <span
-                  className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${
-                    t.status === "open" ? "bg-accent-foreground animate-pulse" : isProfit ? "bg-prexfx-profit" : "bg-prexfx-loss"
-                  }`}
-                />
+                <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${isOpen ? "bg-accent-foreground animate-pulse" : isProfit ? "bg-prexfx-profit" : "bg-prexfx-loss"}`} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-foreground font-medium">
-                    {t.pair} – {t.direction.toUpperCase()} @ {t.entry_price || "—"}
-                  </p>
-                  <p className="text-[9px] text-muted-foreground">
-                    {t.status === "open" ? "OPEN" : `P/L: $${t.profit_loss?.toFixed(2) || "0.00"}`}
-                    {t.units ? ` | ${Math.abs(t.units)} units` : ` | $${t.stake} stake`}
-                  </p>
-                  {expanded === t.id && t.signal_reason && (
-                    <p className="text-[9px] text-muted-foreground mt-1.5 italic leading-relaxed">
-                      AI Logic: {t.signal_reason}
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-foreground font-medium">
+                      {t.pair} – {t.direction?.toUpperCase()} @ {t.entry_price || "—"}
                     </p>
+                    <span className={`text-[10px] font-medium ${pl >= 0 ? "text-prexfx-profit profit-glow" : "text-prexfx-loss"}`}>
+                      {pl >= 0 ? "+" : ""}${pl.toFixed(2)}
+                    </span>
+                  </div>
+                  <p className="text-[9px] text-muted-foreground">
+                    {isOpen ? "LIVE" : "CLOSED"}
+                    {t.units ? ` | ${Math.abs(t.units)} units` : ""}
+                  </p>
+                  {expanded === t.id && (
+                    <div className="mt-1.5 space-y-1">
+                      {t.stop_loss && <p className="text-[9px] text-muted-foreground">SL: {t.stop_loss} | TP: {t.take_profit || "—"}</p>}
+                      {t.signal_reason && <p className="text-[9px] text-muted-foreground italic">AI: {t.signal_reason}</p>}
+                    </div>
                   )}
                 </div>
-                <ChevronRight
-                  size={12}
-                  className={`text-muted-foreground transition-transform shrink-0 ${expanded === t.id ? "rotate-90" : ""}`}
-                />
+                <ChevronRight size={12} className={`text-muted-foreground transition-transform shrink-0 ${expanded === t.id ? "rotate-90" : ""}`} />
               </div>
             </button>
           );
