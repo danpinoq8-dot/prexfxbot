@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import SentimentGauge from "@/components/prexfx/SentimentGauge";
 import { AlertTriangle, Clock, Shield, RefreshCw, ExternalLink } from "lucide-react";
 
-const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
+const SCANNER_URL = "/api/scanner";
 
 const NewsScout = () => {
   const [news, setNews] = useState<any[]>([]);
@@ -13,7 +13,6 @@ const NewsScout = () => {
     setLoading(true);
     try {
       const res = await fetch(SCANNER_URL, {
-        headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
       });
       const data = await res.json();
       if (data.news && Array.isArray(data.news)) {

@@ -6,7 +6,7 @@ interface TickerItem {
   change: string;
 }
 
-const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
+const SCANNER_URL = "/api/scanner";
 
 const PriceTicker = () => {
   const [tickerData, setTickerData] = useState<TickerItem[]>([
@@ -22,8 +22,7 @@ const PriceTicker = () => {
     const fetchPrices = async () => {
       try {
         const res = await fetch(SCANNER_URL, {
-          headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-        });
+          });
         const data = await res.json();
         if (data.quotes) setTickerData(data.quotes);
       } catch (e) {

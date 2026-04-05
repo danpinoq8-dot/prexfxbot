@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, Zap } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 
 const MarketScoutPanel = () => {
   const [signals, setSignals] = useState<any[]>([]);

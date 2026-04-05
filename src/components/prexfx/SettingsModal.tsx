@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { X, Shield, Wifi, WifiOff } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 
 interface SettingsModalProps {
   open: boolean;
@@ -14,18 +14,14 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
   useEffect(() => {
     if (!open) return;
     const fetchConfig = async () => {
-      const { data } = await supabase
-        .from("bot_config")
-        .select("*")
-        .limit(1)
-        .single();
+      const data = await appwrite.getDocument("bot_config", "default");
       if (data) setConfig(data);
     };
     fetchConfig();
 
     // Test OANDA connection via market-scanner
     setConnectionStatus("checking");
-    fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`, {
+    fetch("/api/scanner", {
       headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
     })
       .then(res => {

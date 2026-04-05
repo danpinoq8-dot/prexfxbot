@@ -1,6 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 
 const TradeVaultPanel = () => {
   const [trades, setTrades] = useState<any[]>([]);
@@ -26,7 +26,6 @@ const TradeVaultPanel = () => {
 
     return () => {
       clearInterval(interval);
-      supabase.removeChannel(channel);
     };
   }, []);
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Shield, TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 
 const StatCards = () => {
   const [balance, setBalance] = useState(0);
@@ -47,7 +47,6 @@ const StatCards = () => {
 
     return () => {
       clearInterval(interval);
-      supabase.removeChannel(channel);
     };
   }, []);
 

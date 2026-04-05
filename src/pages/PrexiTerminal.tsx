@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prexi-chat`;
+const CHAT_URL = "/api/chat";
 
 const PrexiTerminal = () => {
   const [input, setInput] = useState("");
@@ -45,7 +45,6 @@ const PrexiTerminal = () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
         body: JSON.stringify({ messages: [...messages, userMsg] }),
       });

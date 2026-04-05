@@ -13,7 +13,7 @@ interface Candle {
   c: number;
 }
 
-const SCANNER_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-scanner`;
+const SCANNER_URL = "/api/scanner";
 
 const ChartPanel = () => {
   const [selectedPair, setSelectedPair] = useState("XAU_USD");
@@ -28,7 +28,7 @@ const ChartPanel = () => {
       try {
         const res = await fetch(
           `${SCANNER_URL}?mode=candles&instrument=${selectedPair}&granularity=${timeframe}&count=60`,
-          { headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` } }
+
         );
         const data = await res.json();
         if (active && data.candles) {

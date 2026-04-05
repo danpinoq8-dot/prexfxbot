@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { BarChart3, TrendingUp, TrendingDown, Target, Award, Filter } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 
 type TradeFilter = "all" | "open" | "closed";
 

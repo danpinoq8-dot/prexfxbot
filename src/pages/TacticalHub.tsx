@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Power, PowerOff } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { appwrite } from "@/lib/appwrite";
 import PriceTicker from "@/components/prexfx/PriceTicker";
 import StatCards from "@/components/prexfx/StatCards";
 import ChartPanel from "@/components/prexfx/ChartPanel";
@@ -15,11 +15,7 @@ const TacticalHub = () => {
 
   useEffect(() => {
     const fetchConfig = async () => {
-      const { data } = await supabase
-        .from("bot_config")
-        .select("is_active, last_scan_at")
-        .limit(1)
-        .single();
+      const data = await appwrite.getDocument("bot_config", "default");
       if (data) {
         setBotActive(data.is_active);
         setLastScan(data.last_scan_at);
@@ -56,11 +52,10 @@ const TacticalHub = () => {
     // If activating, trigger an immediate scan
     if (newState) {
       try {
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trade-engine`, {
+        const res = await fetch("/api/trade", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
         });
         const result = await res.json();
