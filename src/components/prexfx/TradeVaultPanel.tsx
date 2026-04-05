@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 const TradeVaultPanel = () => {
   const [trades, setTrades] = useState<any[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [tab, setTab] = useState<"open" | "closed">("open");
 
   useEffect(() => {
     const fetchTrades = async () => {
@@ -12,38 +13,53 @@ const TradeVaultPanel = () => {
         .from("trades")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(10);
+        .limit(50);
       if (data) setTrades(data);
     };
     fetchTrades();
+    const interval = setInterval(fetchTrades, 10000);
 
     const channel = supabase
       .channel("vault-trades")
       .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchTrades())
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const openTrades = trades.filter(t => t.status === "open");
   const closedTrades = trades.filter(t => t.status === "closed");
+  const displayTrades = tab === "open" ? openTrades : closedTrades;
 
   return (
     <div className="glass-panel rounded-xl p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <h3 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold">
           Trade Vault
         </h3>
-        <span className="text-[8px] uppercase tracking-widest text-muted-foreground">
-          {openTrades.length} OPEN | {closedTrades.length} CLOSED
-        </span>
+        <div className="flex gap-1">
+          {(["open", "closed"] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-2 py-0.5 rounded text-[8px] uppercase tracking-widest transition-colors ${
+                tab === t ? "bg-accent text-accent-foreground" : "bg-secondary/30 text-muted-foreground"
+              }`}
+            >
+              {t} ({t === "open" ? openTrades.length : closedTrades.length})
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-2">
-        {trades.length === 0 && (
-          <p className="text-[9px] text-muted-foreground italic">No trades yet</p>
+      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+        {displayTrades.length === 0 && (
+          <p className="text-[9px] text-muted-foreground italic">No {tab} trades</p>
         )}
-        {trades.map((t) => {
+        {displayTrades.map((t) => {
           const pl = t.profit_loss || 0;
           const isProfit = pl > 0;
           const isOpen = t.status === "open";
@@ -58,20 +74,21 @@ const TradeVaultPanel = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <p className="text-[10px] text-foreground font-medium">
-                      {t.pair} – {t.direction?.toUpperCase()} @ {t.entry_price || "—"}
+                      {t.pair} – {t.direction?.toUpperCase()}
                     </p>
-                    <span className={`text-[10px] font-medium ${pl >= 0 ? "text-prexfx-profit profit-glow" : "text-prexfx-loss"}`}>
+                    <span className={`text-[10px] font-bold font-mono ${pl >= 0 ? "text-prexfx-profit profit-glow" : "text-prexfx-loss"}`}>
                       {pl >= 0 ? "+" : ""}${pl.toFixed(2)}
                     </span>
                   </div>
-                  <p className="text-[9px] text-muted-foreground">
-                    {isOpen ? "LIVE" : "CLOSED"}
-                    {t.units ? ` | ${Math.abs(t.units)} units` : ""}
+                  <p className="text-[9px] text-muted-foreground font-mono">
+                    @ {t.entry_price || "—"}{t.units ? ` | ${Math.abs(t.units)} units` : ""}
                   </p>
                   {expanded === t.id && (
-                    <div className="mt-1.5 space-y-1">
-                      {t.stop_loss && <p className="text-[9px] text-muted-foreground">SL: {t.stop_loss} | TP: {t.take_profit || "—"}</p>}
-                      {t.signal_reason && <p className="text-[9px] text-muted-foreground italic">AI: {t.signal_reason}</p>}
+                    <div className="mt-1.5 space-y-1 text-[9px] text-muted-foreground">
+                      {t.stop_loss && <p>SL: {t.stop_loss} | TP: {t.take_profit || "—"}</p>}
+                      {t.exit_price && <p>Exit: {t.exit_price}</p>}
+                      {t.signal_reason && <p className="italic">AI: {t.signal_reason}</p>}
+                      <p>{new Date(t.created_at).toLocaleString()}</p>
                     </div>
                   )}
                 </div>
