@@ -77,12 +77,28 @@ serve(async (req) => {
   try {
     const OANDA_API_TOKEN = Deno.env.get("OANDA_API_TOKEN")!;
     const OANDA_ACCOUNT_ID = Deno.env.get("OANDA_ACCOUNT_ID")!;
-    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY")!;
     const FINNHUB_API_KEY = Deno.env.get("FINNHUB_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID || !GROQ_API_KEY) throw new Error("Missing secrets");
+    // 14-key Groq rotation pool for the trade engine
+    const GROQ_KEYS: string[] = [];
+    for (let i = 1; i <= 14; i++) {
+      const k = Deno.env.get(`GROQ_API_KEY_${i}`);
+      if (k) GROQ_KEYS.push(k);
+    }
+    // Fallback to original single key if rotation keys not set
+    if (GROQ_KEYS.length === 0) {
+      const fallback = Deno.env.get("GROQ_API_KEY");
+      if (fallback) GROQ_KEYS.push(fallback);
+    }
+
+    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID || GROQ_KEYS.length === 0) throw new Error("Missing secrets");
+
+    // Pick a key based on current minute to spread load evenly
+    const keyIndex = Math.floor(Date.now() / 60000) % GROQ_KEYS.length;
+    const selectedGroqKey = GROQ_KEYS[keyIndex];
+    console.log(`Using Groq key ${keyIndex + 1}/${GROQ_KEYS.length}`);
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
