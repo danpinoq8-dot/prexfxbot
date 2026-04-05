@@ -221,7 +221,7 @@ RULES:
 Respond ONLY with this JSON:
 {"signals":[{"pair":"XAU_USD","signal":"buy|sell|hold","confidence":0-100,"reasoning":"brief ICT logic","entry_target":0,"stop_loss":0,"take_profit":0,"units":1}],"market_summary":"one line overview"}`;
 
-    const aiContent = await groqChat(GROQ_API_KEY, [{ role: "user", content: brainPrompt }]);
+    const aiContent = await groqChat(selectedGroqKey, [{ role: "user", content: brainPrompt }]);
 
     let brainDecision: any;
     try {
