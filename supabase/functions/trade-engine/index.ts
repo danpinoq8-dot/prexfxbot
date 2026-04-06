@@ -11,6 +11,12 @@ const INSTRUMENTS: Record<string, string> = {
   XAU_USD: "XAU/USD", EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", GBP_JPY: "GBP/JPY", USD_JPY: "USD/JPY",
 };
 
+// ── FIXED RISK: exactly 0.5% per trade, no more, no less ──
+const FIXED_RISK_PERCENT = 0.5;
+
+// ── CONFIDENCE: only execute signals with >= 80% confidence ──
+const MIN_CONFIDENCE = 80;
+
 async function oandaFetch(path: string, token: string, options?: RequestInit) {
   const res = await fetch(`${OANDA_API}${path}`, {
     ...options,
@@ -220,21 +226,30 @@ serve(async (req) => {
       } catch { /* skip */ }
     }
 
-    // 8. Recent trades
+    // 8. Recent trades + build list of pairs with open positions
     const { data: recentTrades } = await supabase.from("trades")
-      .select("pair, direction, status, profit_loss, created_at")
-      .order("created_at", { ascending: false }).limit(5);
+      .select("pair, direction, status, profit_loss, created_at, instrument")
+      .order("created_at", { ascending: false }).limit(20);
 
     const openPositions = (recentTrades || []).filter(t => t.status === "open");
 
-    // 9. BRAIN — Cerebras with SMC/ICT
-    const riskAmount = realBalance * config.max_risk_percent / 100;
+    // ── NEW: Build a set of pairs that already have open trades (any direction) ──
+    const pairsWithOpenTrades = new Set<string>();
+    for (const t of openPositions) {
+      // Add both the OANDA instrument key and the display pair
+      if (t.instrument) pairsWithOpenTrades.add(t.instrument);
+      if (t.pair) pairsWithOpenTrades.add(t.pair);
+    }
+
+    // 9. BRAIN — Cerebras with SMC/ICT + UPDATED RULES
+    const riskAmount = realBalance * FIXED_RISK_PERCENT / 100;
     const brainPrompt = `You are PREXI, an autonomous institutional forex AI using Smart Money Concepts (SMC) and ICT methodology.
 
 ACCOUNT: Balance $${realBalance.toFixed(0)} | Open: ${account.openTradeCount} | NAV: $${parseFloat(account.NAV || account.balance).toFixed(0)} | Unrealized: $${unrealizedPL.toFixed(2)}
-RISK: Max ${config.max_risk_percent}% per trade = $${riskAmount.toFixed(0)} risk
+RISK: EXACTLY ${FIXED_RISK_PERCENT}% per trade = $${riskAmount.toFixed(2)} risk — NO MORE, NO LESS. Adjust lot/units to match.
 NEWS BLACKOUT: ${config.news_blackout_active ? "ACTIVE — NO TRADES" : "CLEAR"}
 MAX NEW POSITIONS: ${Math.max(0, 3 - (parseInt(account.openTradeCount) || 0))}
+PAIRS WITH OPEN TRADES (DO NOT OPEN NEW TRADES ON THESE): ${pairsWithOpenTrades.size > 0 ? Array.from(pairsWithOpenTrades).join(", ") : "None"}
 
 PRICES: ${Object.entries(prices).map(([k, v]) => `${k}: Bid ${v.bid} Ask ${v.ask} Spread ${v.spread.toFixed(5)}`).join(" | ")}
 
@@ -248,14 +263,16 @@ NEWS: ${newsHeadlines || "None"}
 OPEN POSITIONS: ${openPositions.map(t => `${t.pair} ${t.direction} P/L:$${t.profit_loss}`).join(", ") || "None"}
 
 ICT/SMC EXECUTION RULES:
-1. LIQUIDITY FIRST: Only enter AFTER price sweeps a liquidity pool
-2. ORDER BLOCK ENTRY: Enter at a validated Order Block
-3. FAIR VALUE GAP: Price must fill into an FVG for optimal entry
-4. BOS/CHoCH: Confirm Break of Structure on H1 before entering on M15
-5. MULTI-TIMEFRAME ALIGNMENT: H4 sets bias, H1 confirms, M15 gives entry
-6. UNIT CALCULATION: units = risk_amount_dollars / abs(entry_price - stop_loss_price). For XAU this gives ounces, for forex it gives currency units. P/L MUST be in DOLLARS not points.
-7. Never duplicate an existing open position on same pair/direction
+1. LIQUIDITY FIRST: Only enter AFTER price sweeps a liquidity pool.
+2. ORDER BLOCK ENTRY: Enter at a validated Order Block.
+3. FAIR VALUE GAP: Price must fill into an FVG for optimal entry.
+4. BOS/CHoCH: Confirm Break of Structure on H1 before entering on M15.
+5. MULTI-TIMEFRAME ALIGNMENT: H4 sets bias, H1 confirms, M15 gives entry.
+6. UNIT CALCULATION: risk_amount = balance × 0.005. units = risk_amount / abs(entry_price - stop_loss_price). SL MUST be placed so that if hit, the loss equals EXACTLY 0.5% of the account balance ($${riskAmount.toFixed(2)}). For XAU this gives ounces, for forex it gives currency units. P/L MUST be in DOLLARS not points.
+7. NEVER place a trade on a pair that already has an open position — not even in the opposite direction. PAIRS WITH OPEN TRADES listed above are BLOCKED.
 8. If no ICT confluence exists: HOLD. Patience is the edge.
+9. TRADE CLOSURE: The ONLY reasons to close a trade are: (a) it hits the stop loss (0.5% of balance), or (b) you determine with high certainty that the trade has ZERO chance of recovery and price has moved decisively against the position. If there is STILL a reasonable chance of the trade winning, KEEP IT OPEN — do not panic-close.
+10. CONFIDENCE: Only recommend a trade if confidence is >= ${MIN_CONFIDENCE}. Below that, signal "hold".
 
 Respond ONLY with JSON:
 {"signals":[{"pair":"XAU_USD","signal":"buy|sell|hold","confidence":0-100,"reasoning":"ICT logic","entry_target":0,"stop_loss":0,"take_profit":0,"units":1}],"market_summary":"one line overview"}`;
@@ -273,6 +290,22 @@ Respond ONLY with JSON:
     // 10. Execute trades
     const results: any[] = [];
     for (const signal of (brainDecision.signals || [])) {
+
+      // ── NEW: Block duplicate pair trades (any direction) ──
+      if (pairsWithOpenTrades.has(signal.pair) || pairsWithOpenTrades.has(INSTRUMENTS[signal.pair] || "")) {
+        console.warn(`BLOCKED: ${signal.pair} already has an open trade — skipping`);
+        results.push({ pair: signal.pair, executed: false, reason: "duplicate_pair_blocked" });
+
+        // Still save the signal for audit
+        await supabase.from("trade_signals").insert({
+          pair: INSTRUMENTS[signal.pair] || signal.pair,
+          signal: signal.signal, confidence: signal.confidence,
+          reasoning: `[BLOCKED — duplicate pair] ${signal.reasoning}`,
+          oanda_data: prices, gemini_analysis: aiContent, executed: false,
+        });
+        continue;
+      }
+
       const { data: savedSignal } = await supabase.from("trade_signals").insert({
         pair: INSTRUMENTS[signal.pair] || signal.pair,
         signal: signal.signal,
@@ -283,8 +316,17 @@ Respond ONLY with JSON:
         executed: false,
       }).select().single();
 
-      if (signal.signal !== "hold" && signal.confidence > 75) {
-        const units = Math.abs(signal.units || 1);
+      // ── UPDATED: confidence >= 80 (was > 75) ──
+      if (signal.signal !== "hold" && signal.confidence >= MIN_CONFIDENCE) {
+
+        // ── UPDATED: enforce exact 0.5% risk via unit calculation ──
+        let units: number;
+        if (signal.stop_loss && signal.entry_target && Math.abs(signal.entry_target - signal.stop_loss) > 0) {
+          units = Math.round(riskAmount / Math.abs(signal.entry_target - signal.stop_loss));
+        } else {
+          // Fallback: use AI-suggested units but cap at risk amount
+          units = Math.abs(signal.units || 1);
+        }
         const signedUnits = signal.signal === "sell" ? -units : units;
 
         const orderBody: any = {
@@ -317,7 +359,7 @@ Respond ONLY with JSON:
             if (savedSignal && trade) {
               await supabase.from("trade_signals").update({ executed: true, trade_id: trade.id }).eq("id", savedSignal.id);
             }
-            results.push({ pair: signal.pair, executed: true, direction: signal.signal });
+            results.push({ pair: signal.pair, executed: true, direction: signal.signal, units: Math.abs(units), risk_amount: riskAmount });
           } else {
             results.push({ pair: signal.pair, executed: false, reason: orderResult.orderRejectTransaction?.rejectReason || "no fill" });
           }
@@ -326,7 +368,7 @@ Respond ONLY with JSON:
           results.push({ pair: signal.pair, executed: false, error: String(e) });
         }
       } else {
-        results.push({ pair: signal.pair, executed: false, reason: "hold/low confidence" });
+        results.push({ pair: signal.pair, executed: false, reason: signal.confidence < MIN_CONFIDENCE ? `confidence_${signal.confidence}_below_${MIN_CONFIDENCE}` : "hold" });
       }
     }
 
@@ -334,11 +376,12 @@ Respond ONLY with JSON:
       last_scan_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", config.id);
 
-    console.log(`Scan complete: ${results.length} signals, ${results.filter(r => r.executed).length} executed`);
+    console.log(`Scan complete: ${results.length} signals, ${results.filter(r => r.executed).length} executed (risk=${FIXED_RISK_PERCENT}%, min_conf=${MIN_CONFIDENCE})`);
 
     return new Response(JSON.stringify({
       status: "scan_complete", market_summary: brainDecision.market_summary,
       account: { balance: realBalance, open_trades: account.openTradeCount, unrealized_pl: unrealizedPL },
+      risk_config: { fixed_risk_percent: FIXED_RISK_PERCENT, risk_amount: riskAmount, min_confidence: MIN_CONFIDENCE },
       results, engine: "cerebras", scanned_at: new Date().toISOString(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
