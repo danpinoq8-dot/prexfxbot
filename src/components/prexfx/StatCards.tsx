@@ -14,7 +14,7 @@ const StatCards = () => {
   useEffect(() => {
     const fetchData = async () => {
       const [configRes, tradesRes] = await Promise.all([
-        supabase.from("bot_config").select("*").limit(1).single(),
+        appwrite.getDocument("bot_config", "default"),
         appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[500]}']),
       ]);
 

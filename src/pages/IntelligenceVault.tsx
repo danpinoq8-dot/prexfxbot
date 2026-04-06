@@ -13,9 +13,9 @@ const IntelligenceVault = () => {
     const fetchData = async () => {
       const [tradesRes, configRes] = await Promise.all([
         appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[100]}']),
-        supabase.from("bot_config").select("balance").limit(1).single(),
+        appwrite.getDocument("bot_config", "default"),
       ]);
-      if (tradesRes.data) setTrades(tradesRes.data);
+      if (tradesRes.documents) setTrades(tradesRes.documents);
       if (configRes.data) setBalance(Number(configRes.data.balance));
     };
     fetchData();
