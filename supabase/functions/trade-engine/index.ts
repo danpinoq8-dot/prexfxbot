@@ -29,7 +29,7 @@ async function cerebrasChat(apiKey: string, messages: any[], retries = 2): Promi
       const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "llama-4-scout-17b-16e-instruct", messages, temperature: 0.2, max_tokens: 2000 }),
+        body: JSON.stringify({ model: "qwen-3-235b-a22b-instruct-2507", messages, temperature: 0.2, max_tokens: 2000 }),
       });
       if (res.ok) {
         const data = await res.json();
