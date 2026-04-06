@@ -14,15 +14,10 @@ const TradeVaultPanel = () => {
         .select("*")
         .order("created_at", { ascending: false })
         .limit(50);
-      if (data) setTrades(data);
+      if (data?.documents) setTrades(data.documents);
     };
     fetchTrades();
     const interval = setInterval(fetchTrades, 10000);
-
-    const channel = supabase
-      .channel("vault-trades")
-      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchTrades())
-      .subscribe();
 
     return () => {
       clearInterval(interval);

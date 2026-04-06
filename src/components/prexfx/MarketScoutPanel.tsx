@@ -12,16 +12,10 @@ const MarketScoutPanel = () => {
         .select("*")
         .order("created_at", { ascending: false })
         .limit(4);
-      if (data) setSignals(data);
+      if (data?.documents) setSignals(data.documents);
     };
     fetch();
-
-    const channel = supabase
-      .channel("scout-signals")
-      .on("postgres_changes", { event: "*", schema: "public", table: "trade_signals" }, () => fetch())
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    return () => {};
   }, []);
 
   return (

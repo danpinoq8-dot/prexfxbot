@@ -12,20 +12,14 @@ const IntelligenceVault = () => {
   useEffect(() => {
     const fetchData = async () => {
       const [tradesRes, configRes] = await Promise.all([
-        supabase.from("trades").select("*").order("created_at", { ascending: false }).limit(100),
+        appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[100]}']),
         supabase.from("bot_config").select("balance").limit(1).single(),
       ]);
       if (tradesRes.data) setTrades(tradesRes.data);
       if (configRes.data) setBalance(Number(configRes.data.balance));
     };
     fetchData();
-
-    const channel = supabase
-      .channel("intel-vault")
-      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchData())
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    return () => {};
   }, []);
 
   const openTrades = trades.filter(t => t.status === "open");

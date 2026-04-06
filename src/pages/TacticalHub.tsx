@@ -22,13 +22,7 @@ const TacticalHub = () => {
       }
     };
     fetchConfig();
-
-    const channel = supabase
-      .channel("bot-config-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "bot_config" }, () => fetchConfig())
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    return () => {};
   }, []);
 
   const toggleBot = async () => {

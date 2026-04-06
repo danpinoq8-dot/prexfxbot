@@ -15,7 +15,7 @@ const StatCards = () => {
     const fetchData = async () => {
       const [configRes, tradesRes] = await Promise.all([
         supabase.from("bot_config").select("*").limit(1).single(),
-        supabase.from("trades").select("status, profit_loss").limit(500),
+        appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[500]}']),
       ]);
 
       if (configRes.data) {
@@ -38,12 +38,6 @@ const StatCards = () => {
 
     fetchData();
     const interval = setInterval(fetchData, 10000);
-
-    const channel = supabase
-      .channel("stats-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "bot_config" }, () => fetchData())
-      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchData())
-      .subscribe();
 
     return () => {
       clearInterval(interval);

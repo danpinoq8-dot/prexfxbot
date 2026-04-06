@@ -21,9 +21,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
 
     // Test OANDA connection via market-scanner
     setConnectionStatus("checking");
-    fetch("/api/scanner", {
-      headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-    })
+    fetch("/api/scanner", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mode: "prices"}),    })
       .then(res => {
         if (res.ok) setConnectionStatus("connected");
         else setConnectionStatus("error");
