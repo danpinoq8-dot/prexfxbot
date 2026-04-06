@@ -23,46 +23,38 @@ async function oandaFetch(path: string, token: string, options?: RequestInit) {
   return res.json();
 }
 
-// Groq with 14-key rotation and retry
-async function groqChat(keys: string[], messages: any[], retries = 3): Promise<string> {
+async function cerebrasChat(apiKey: string, messages: any[], retries = 2): Promise<string> {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    // Rotate through keys on each attempt
-    const keyIndex = (Math.floor(Date.now() / 60000) + attempt) % keys.length;
-    const apiKey = keys[keyIndex];
-    console.log(`Groq attempt ${attempt + 1}, key ${keyIndex + 1}/${keys.length}`);
-
     try {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages, temperature: 0.2, max_tokens: 2000 }),
+        body: JSON.stringify({ model: "qwen-3-235b-a22b-instruct-2507", messages, temperature: 0.2, max_tokens: 2000 }),
       });
       if (res.ok) {
         const data = await res.json();
         return data.choices?.[0]?.message?.content || "";
       }
       if (res.status === 429) {
-        console.warn(`Key ${keyIndex + 1} rate limited, trying next...`);
-        await new Promise(r => setTimeout(r, 2000));
+        console.warn(`Cerebras rate limited, retry ${attempt + 1}...`);
+        await new Promise(r => setTimeout(r, 3000));
         continue;
       }
       const errText = await res.text();
-      throw new Error(`Groq [${res.status}]: ${errText}`);
+      throw new Error(`Cerebras [${res.status}]: ${errText}`);
     } catch (e) {
       if (attempt === retries) throw e;
-      console.warn(`Groq attempt ${attempt + 1} failed:`, e);
+      console.warn(`Cerebras attempt ${attempt + 1} failed:`, e);
     }
   }
-  throw new Error("Groq retries exhausted across all keys");
+  throw new Error("Cerebras retries exhausted");
 }
 
-// Multi-timeframe structure analysis
 function analyzeStructure(candles: any[]): string {
   if (candles.length < 10) return "Insufficient data";
   const last = candles[candles.length - 1];
   const trend = last.c > candles[0].o ? "BULLISH" : last.c < candles[0].o ? "BEARISH" : "RANGING";
 
-  // Detect BOS/CHoCH
   const swingHighs: { price: number; idx: number }[] = [];
   const swingLows: { price: number; idx: number }[] = [];
   for (let i = 2; i < candles.length - 2; i++) {
@@ -72,36 +64,22 @@ function analyzeStructure(candles: any[]): string {
       swingLows.push({ price: candles[i].l, idx: i });
   }
 
-  // BOS: price breaks previous swing in trend direction
   let bos = "NONE";
-  if (swingHighs.length >= 2) {
-    const prev = swingHighs[swingHighs.length - 2];
-    if (last.c > prev.price) bos = "BULLISH_BOS";
-  }
-  if (swingLows.length >= 2) {
-    const prev = swingLows[swingLows.length - 2];
-    if (last.c < prev.price) bos = "BEARISH_BOS";
-  }
+  if (swingHighs.length >= 2 && last.c > swingHighs[swingHighs.length - 2].price) bos = "BULLISH_BOS";
+  if (swingLows.length >= 2 && last.c < swingLows[swingLows.length - 2].price) bos = "BEARISH_BOS";
 
-  // Detect FVG (Fair Value Gap)
   const fvgs: string[] = [];
   for (let i = 2; i < candles.length; i++) {
-    const gap_up = candles[i].l > candles[i - 2].h;
-    const gap_down = candles[i].h < candles[i - 2].l;
-    if (gap_up) fvgs.push(`BULL_FVG@${candles[i].l.toFixed(5)}`);
-    if (gap_down) fvgs.push(`BEAR_FVG@${candles[i].h.toFixed(5)}`);
+    if (candles[i].l > candles[i - 2].h) fvgs.push(`BULL_FVG@${candles[i].l.toFixed(5)}`);
+    if (candles[i].h < candles[i - 2].l) fvgs.push(`BEAR_FVG@${candles[i].h.toFixed(5)}`);
   }
 
-  // Detect Order Blocks (last bearish candle before bullish move, vice versa)
   const orderBlocks: string[] = [];
   for (let i = 1; i < candles.length - 1; i++) {
-    const wasBearish = candles[i].c < candles[i].o;
-    const nextBullish = candles[i + 1].c > candles[i + 1].o && candles[i + 1].c > candles[i].h;
-    if (wasBearish && nextBullish) orderBlocks.push(`BULL_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
-
-    const wasBullish = candles[i].c > candles[i].o;
-    const nextBearish = candles[i + 1].c < candles[i + 1].o && candles[i + 1].c < candles[i].l;
-    if (wasBullish && nextBearish) orderBlocks.push(`BEAR_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
+    if (candles[i].c < candles[i].o && candles[i + 1].c > candles[i + 1].o && candles[i + 1].c > candles[i].h)
+      orderBlocks.push(`BULL_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
+    if (candles[i].c > candles[i].o && candles[i + 1].c < candles[i + 1].o && candles[i + 1].c < candles[i].l)
+      orderBlocks.push(`BEAR_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
   }
 
   const highest = Math.max(...candles.map((c: any) => c.h));
@@ -125,22 +103,12 @@ serve(async (req) => {
   try {
     const OANDA_API_TOKEN = Deno.env.get("OANDA_API_TOKEN")!;
     const OANDA_ACCOUNT_ID = Deno.env.get("OANDA_ACCOUNT_ID")!;
+    const CEREBRAS_API_KEY = Deno.env.get("CEREBRAS_API_KEY")!;
     const FINNHUB_API_KEY = Deno.env.get("FINNHUB_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Load 14-key rotation pool
-    const GROQ_KEYS: string[] = [];
-    for (let i = 1; i <= 14; i++) {
-      const k = Deno.env.get(`GROQ_API_KEY_${i}`);
-      if (k) GROQ_KEYS.push(k);
-    }
-    if (GROQ_KEYS.length === 0) {
-      const fallback = Deno.env.get("GROQ_API_KEY");
-      if (fallback) GROQ_KEYS.push(fallback);
-    }
-
-    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID || GROQ_KEYS.length === 0) throw new Error("Missing secrets");
+    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID || !CEREBRAS_API_KEY) throw new Error("Missing secrets");
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -162,7 +130,7 @@ serve(async (req) => {
       balance: realBalance, daily_pnl: unrealizedPL, updated_at: new Date().toISOString(),
     }).eq("id", config.id);
 
-    // 3. Sync open trades P/L from OANDA
+    // 3. Sync open trades P/L from OANDA (in dollars, not points)
     try {
       const openTradesData = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/openTrades`, OANDA_API_TOKEN);
       const oandaOpenTrades = openTradesData.trades || [];
@@ -186,7 +154,6 @@ serve(async (req) => {
         const oandaIds = new Set(oandaOpenTrades.map((t: any) => t.id));
         for (const dbt of dbOpenTrades) {
           if (dbt.broker_trade_id && !oandaIds.has(dbt.broker_trade_id)) {
-            // Fetch the closed trade P/L from OANDA transaction history
             let finalPL = 0;
             try {
               const txData = await oandaFetch(
@@ -197,12 +164,7 @@ serve(async (req) => {
             } catch { /* use 0 */ }
 
             await supabase.from("trades")
-              .update({
-                status: "closed",
-                profit_loss: finalPL,
-                closed_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              })
+              .update({ status: "closed", profit_loss: finalPL, closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
               .eq("id", dbt.id);
           }
         }
@@ -229,26 +191,20 @@ serve(async (req) => {
         getCandles(pair, "H1", 30, OANDA_API_TOKEN),
         getCandles(pair, "M15", 20, OANDA_API_TOKEN),
       ]);
-      mtfAnalysis[pair] = [
-        `H4: ${analyzeStructure(h4)}`,
-        `H1: ${analyzeStructure(h1)}`,
-        `M15: ${analyzeStructure(m15)}`,
-      ].join("\n");
+      mtfAnalysis[pair] = [`H4: ${analyzeStructure(h4)}`, `H1: ${analyzeStructure(h1)}`, `M15: ${analyzeStructure(m15)}`].join("\n");
     }
 
-    // 6. Order Book (liquidity detection)
+    // 6. Order Book
     let orderBookInfo = "";
     try {
       const obData = await oandaFetch(`/v3/instruments/XAU_USD/orderBook`, OANDA_API_TOKEN);
       if (obData.orderBook) {
         const buckets = obData.orderBook.buckets || [];
-        // Find top liquidity clusters
         const sorted = [...buckets].sort((a: any, b: any) =>
           (parseFloat(b.longCountPercent) + parseFloat(b.shortCountPercent)) -
           (parseFloat(a.longCountPercent) + parseFloat(a.shortCountPercent))
         );
-        const top5 = sorted.slice(0, 5);
-        orderBookInfo = `XAU_USD ORDER BOOK (Liquidity Pools):\n${top5.map((b: any) =>
+        orderBookInfo = `XAU_USD ORDER BOOK:\n${sorted.slice(0, 5).map((b: any) =>
           `  Price ${b.price}: Longs ${b.longCountPercent}% | Shorts ${b.shortCountPercent}%`
         ).join("\n")}`;
       }
@@ -260,9 +216,7 @@ serve(async (req) => {
       try {
         const newsRes = await fetch(`https://finnhub.io/api/v1/news?category=forex&token=${FINNHUB_API_KEY}`);
         const raw = await newsRes.json();
-        if (Array.isArray(raw)) {
-          newsHeadlines = raw.slice(0, 5).map((n: any) => n.headline).join(" | ");
-        }
+        if (Array.isArray(raw)) newsHeadlines = raw.slice(0, 5).map((n: any) => n.headline).join(" | ");
       } catch { /* skip */ }
     }
 
@@ -273,11 +227,12 @@ serve(async (req) => {
 
     const openPositions = (recentTrades || []).filter(t => t.status === "open");
 
-    // 9. BRAIN — Full SMC/ICT prompt
-    const brainPrompt = `You are PREXI, an autonomous institutional forex AI using Smart Money Concepts (SMC) and ICT methodology. You trade like a hedge fund.
+    // 9. BRAIN — Cerebras with SMC/ICT
+    const riskAmount = realBalance * config.max_risk_percent / 100;
+    const brainPrompt = `You are PREXI, an autonomous institutional forex AI using Smart Money Concepts (SMC) and ICT methodology.
 
 ACCOUNT: Balance $${realBalance.toFixed(0)} | Open: ${account.openTradeCount} | NAV: $${parseFloat(account.NAV || account.balance).toFixed(0)} | Unrealized: $${unrealizedPL.toFixed(2)}
-RISK: Max ${config.max_risk_percent}% per trade = $${(realBalance * config.max_risk_percent / 100).toFixed(0)} risk
+RISK: Max ${config.max_risk_percent}% per trade = $${riskAmount.toFixed(0)} risk
 NEWS BLACKOUT: ${config.news_blackout_active ? "ACTIVE — NO TRADES" : "CLEAR"}
 MAX NEW POSITIONS: ${Math.max(0, 3 - (parseInt(account.openTradeCount) || 0))}
 
@@ -291,22 +246,21 @@ ${orderBookInfo}
 NEWS: ${newsHeadlines || "None"}
 
 OPEN POSITIONS: ${openPositions.map(t => `${t.pair} ${t.direction} P/L:$${t.profit_loss}`).join(", ") || "None"}
-RECENT CLOSED: ${(recentTrades || []).filter(t => t.status === "closed").map(t => `${t.pair} ${t.direction} $${t.profit_loss}`).join(", ") || "None"}
 
 ICT/SMC EXECUTION RULES:
-1. LIQUIDITY FIRST: Only enter AFTER price sweeps a liquidity pool (stop hunt above swing highs or below swing lows)
-2. ORDER BLOCK ENTRY: Enter at a validated Order Block (last opposing candle before impulsive move)
+1. LIQUIDITY FIRST: Only enter AFTER price sweeps a liquidity pool
+2. ORDER BLOCK ENTRY: Enter at a validated Order Block
 3. FAIR VALUE GAP: Price must fill into an FVG for optimal entry
-4. BOS/CHoCH: Confirm Break of Structure or Change of Character on H1 before entering on M15
-5. MULTI-TIMEFRAME ALIGNMENT: H4 sets bias, H1 confirms structure, M15 gives entry
-6. Calculate units: risk_amount / abs(entry - stop_loss). XAU=ounces, forex=currency units
+4. BOS/CHoCH: Confirm Break of Structure on H1 before entering on M15
+5. MULTI-TIMEFRAME ALIGNMENT: H4 sets bias, H1 confirms, M15 gives entry
+6. UNIT CALCULATION: units = risk_amount_dollars / abs(entry_price - stop_loss_price). For XAU this gives ounces, for forex it gives currency units. P/L MUST be in DOLLARS not points.
 7. Never duplicate an existing open position on same pair/direction
 8. If no ICT confluence exists: HOLD. Patience is the edge.
 
 Respond ONLY with JSON:
-{"signals":[{"pair":"XAU_USD","signal":"buy|sell|hold","confidence":0-100,"reasoning":"ICT logic: what structure, what liquidity swept, what entry model","entry_target":0,"stop_loss":0,"take_profit":0,"units":1}],"market_summary":"one line institutional overview"}`;
+{"signals":[{"pair":"XAU_USD","signal":"buy|sell|hold","confidence":0-100,"reasoning":"ICT logic","entry_target":0,"stop_loss":0,"take_profit":0,"units":1}],"market_summary":"one line overview"}`;
 
-    const aiContent = await groqChat(GROQ_KEYS, [{ role: "user", content: brainPrompt }]);
+    const aiContent = await cerebrasChat(CEREBRAS_API_KEY, [{ role: "user", content: brainPrompt }]);
 
     let brainDecision: any;
     try {
@@ -385,7 +339,7 @@ Respond ONLY with JSON:
     return new Response(JSON.stringify({
       status: "scan_complete", market_summary: brainDecision.market_summary,
       account: { balance: realBalance, open_trades: account.openTradeCount, unrealized_pl: unrealizedPL },
-      results, groq_keys_available: GROQ_KEYS.length, scanned_at: new Date().toISOString(),
+      results, engine: "cerebras", scanned_at: new Date().toISOString(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (e) {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Shield, TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
-import { appwrite } from "@/lib/appwrite";
+import { Shield, TrendingUp, TrendingDown, Target } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 const StatCards = () => {
   const [balance, setBalance] = useState(0);
@@ -14,8 +14,8 @@ const StatCards = () => {
   useEffect(() => {
     const fetchData = async () => {
       const [configRes, tradesRes] = await Promise.all([
-        appwrite.getDocument("bot_config", "default"),
-        appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[500]}']),
+        supabase.from("bot_config").select("*").limit(1).single(),
+        supabase.from("trades").select("*").order("created_at", { ascending: false }).limit(500),
       ]);
 
       if (configRes.data) {
@@ -38,13 +38,9 @@ const StatCards = () => {
 
     fetchData();
     const interval = setInterval(fetchData, 10000);
-
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
 
-  const roi = balance > 0 ? ((dailyPnl / balance) * 100).toFixed(2) : "0.00";
   const isProfit = dailyPnl >= 0;
 
   return (
@@ -55,12 +51,10 @@ const StatCards = () => {
           ${balance.toLocaleString("en-US", { minimumFractionDigits: 2 })}
         </p>
       </div>
-
       <div className="glass-panel rounded-xl p-4">
         <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Open Trades</p>
         <p className="text-lg md:text-xl font-extralight tracking-tight text-foreground">{activeTrades}</p>
       </div>
-
       <div className="glass-panel rounded-xl p-4">
         <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-1">Unrealized P/L</p>
         <div className="flex items-center gap-2">
@@ -70,7 +64,6 @@ const StatCards = () => {
           </p>
         </div>
       </div>
-
       <div className="glass-panel rounded-xl p-4">
         <div className="flex items-center gap-1 mb-1">
           <Target size={10} className="text-muted-foreground" />
@@ -79,7 +72,6 @@ const StatCards = () => {
         <p className="text-lg md:text-xl font-extralight tracking-tight text-foreground">{winRate}</p>
         <p className="text-[8px] text-muted-foreground">{wins}W / {losses}L</p>
       </div>
-
       <div className="glass-panel rounded-xl p-4">
         <div className="flex items-center gap-1 mb-1">
           <Shield size={10} className="text-muted-foreground" />
