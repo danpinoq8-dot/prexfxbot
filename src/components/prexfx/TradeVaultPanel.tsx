@@ -9,12 +9,8 @@ const TradeVaultPanel = () => {
 
   useEffect(() => {
     const fetchTrades = async () => {
-      const { data } = await supabase
-        .from("trades")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (data?.documents) setTrades(data.documents);
+      const res = await appwrite.listDocuments("trades", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[50]}']);
+      if (res?.documents) setTrades(res.documents);
     };
     fetchTrades();
     const interval = setInterval(fetchTrades, 10000);

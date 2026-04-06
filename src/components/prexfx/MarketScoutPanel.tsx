@@ -7,12 +7,8 @@ const MarketScoutPanel = () => {
 
   useEffect(() => {
     const fetch = async () => {
-      const { data } = await supabase
-        .from("trade_signals")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(4);
-      if (data?.documents) setSignals(data.documents);
+      const res = await appwrite.listDocuments("trade_signals", ['{"method":"orderDesc","attribute":"$createdAt"}', '{"method":"limit","values":[4]}']);
+      if (res?.documents) setSignals(res.documents);
     };
     fetch();
     return () => {};
