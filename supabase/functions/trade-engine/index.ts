@@ -36,11 +36,7 @@ const MAX_WEEKLY_LOSS_R = 5;
 const MAX_USD_CORRELATED = 3;
 const MAX_SPREAD_STOP_RATIO = 0.20;  // Spread <= 20% of stop
 
-// ── Session filter: London (07-16 UTC) or NY (12-21 UTC) ──
-function isActiveTradingSession(): boolean {
-  const hour = new Date().getUTCHours();
-  return hour >= 7 && hour <= 21; // Combined London + NY window
-}
+const MIN_ATR_PRICE_RATIO = 0.0005; // ATR >= 0.05% of price
 
 // ── OANDA helpers ──
 async function oandaFetch(path: string, token: string, options?: RequestInit) {
