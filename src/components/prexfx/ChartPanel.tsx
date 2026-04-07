@@ -1,8 +1,16 @@
 import { useState, useEffect } from "react";
 
-const OANDA_INSTRUMENTS = ["XAU_USD", "EUR_USD", "GBP_USD", "GBP_JPY", "USD_JPY"];
+const OANDA_INSTRUMENTS = [
+  "XAU_USD", "EUR_USD", "GBP_USD", "GBP_JPY", "USD_JPY",
+  "AUD_USD", "NZD_USD", "USD_CAD", "USD_CHF",
+  "EUR_GBP", "EUR_JPY", "EUR_AUD", "GBP_AUD",
+  "AUD_JPY", "CAD_JPY", "NZD_JPY", "GBP_CAD",
+];
 const DISPLAY_MAP: Record<string, string> = {
   XAU_USD: "XAU/USD", EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", GBP_JPY: "GBP/JPY", USD_JPY: "USD/JPY",
+  AUD_USD: "AUD/USD", NZD_USD: "NZD/USD", USD_CAD: "USD/CAD", USD_CHF: "USD/CHF",
+  EUR_GBP: "EUR/GBP", EUR_JPY: "EUR/JPY", EUR_AUD: "EUR/AUD", GBP_AUD: "GBP/AUD",
+  AUD_JPY: "AUD/JPY", CAD_JPY: "CAD/JPY", NZD_JPY: "NZD/JPY", GBP_CAD: "GBP/CAD",
 };
 
 interface Candle { time: string; o: number; h: number; l: number; c: number; }
