@@ -15,7 +15,7 @@ const INSTRUMENTS: Record<string, string> = {
 };
 
 // USD-correlated pairs for correlation filter
-const USD_CORRELATED = new Set(["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"]);
+const USD_CORRELATED = new Set(["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD", "NZD_USD", "USD_CAD", "USD_CHF"]);
 
 // ── STRATEGY CONSTANTS ──
 const RISK_PERCENT = 0.1;       // 0.1% per trade
