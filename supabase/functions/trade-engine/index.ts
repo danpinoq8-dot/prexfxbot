@@ -33,8 +33,7 @@ const TRADE_SPACING_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DAILY_LOSS_R = 2;
 const MAX_CONSECUTIVE_LOSSES = 3;
 const MAX_WEEKLY_LOSS_R = 5;
-const MAX_USD_CORRELATED = 2;
-const MIN_ATR_PRICE_RATIO = 0.0005; // ATR >= 0.05% of price
+const MAX_USD_CORRELATED = 3;
 const MAX_SPREAD_STOP_RATIO = 0.20;  // Spread <= 20% of stop
 
 // ── Session filter: London (07-16 UTC) or NY (12-21 UTC) ──
