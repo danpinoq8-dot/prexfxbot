@@ -12,7 +12,7 @@ PrexFx (PREXFX) - AI Risk Architect trading dashboard
 ## Architecture
 - Broker: OANDA (practice account via REST API)
 - Strategy: Trend Pullback (ATR-Structured Momentum) — fully mechanical, no AI brain
-- OANDA instruments: XAU_USD, EUR_USD, GBP_USD, GBP_JPY, USD_JPY
+- OANDA instruments: XAU_USD, EUR_USD, GBP_USD, GBP_JPY, USD_JPY, AUD_USD, NZD_USD, USD_CAD, USD_CHF, EUR_GBP, EUR_JPY, EUR_AUD, GBP_AUD, AUD_JPY, CAD_JPY, NZD_JPY, GBP_CAD (17 pairs)
 - Secrets: OANDA_API_TOKEN, OANDA_ACCOUNT_ID, FINNHUB_API_KEY, CEREBRAS_API_KEY (chat only)
 
 ## Strategy Rules (Mechanical)
