@@ -238,12 +238,6 @@ serve(async (req) => {
       });
     }
 
-    // 2. Session filter
-    if (!isActiveTradingSession()) {
-      return new Response(JSON.stringify({ status: "outside_session", message: "Outside London/NY session" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // 3. Daily / weekly circuit breakers
     const dailyLossR = Number(config.daily_loss_r || 0);
