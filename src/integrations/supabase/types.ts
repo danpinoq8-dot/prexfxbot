@@ -17,36 +17,57 @@ export type Database = {
       bot_config: {
         Row: {
           balance: number
+          consecutive_losses: number
+          daily_loss_r: number
           daily_pnl: number
           id: string
           is_active: boolean
           last_scan_at: string | null
+          last_trade_at: string | null
+          max_concurrent_trades: number
           max_risk_percent: number
           news_blackout_active: boolean
           pairs_watched: string[]
+          risk_percent: number
+          strategy: string
           updated_at: string
+          weekly_loss_r: number
         }
         Insert: {
           balance?: number
+          consecutive_losses?: number
+          daily_loss_r?: number
           daily_pnl?: number
           id?: string
           is_active?: boolean
           last_scan_at?: string | null
+          last_trade_at?: string | null
+          max_concurrent_trades?: number
           max_risk_percent?: number
           news_blackout_active?: boolean
           pairs_watched?: string[]
+          risk_percent?: number
+          strategy?: string
           updated_at?: string
+          weekly_loss_r?: number
         }
         Update: {
           balance?: number
+          consecutive_losses?: number
+          daily_loss_r?: number
           daily_pnl?: number
           id?: string
           is_active?: boolean
           last_scan_at?: string | null
+          last_trade_at?: string | null
+          max_concurrent_trades?: number
           max_risk_percent?: number
           news_blackout_active?: boolean
           pairs_watched?: string[]
+          risk_percent?: number
+          strategy?: string
           updated_at?: string
+          weekly_loss_r?: number
         }
         Relationships: []
       }
