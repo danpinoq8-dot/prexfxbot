@@ -11,15 +11,24 @@ PrexFx (PREXFX) - AI Risk Architect trading dashboard
 
 ## Architecture
 - Broker: OANDA (practice account via REST API)
-- Three Pillars: Scout (OANDA pricing + Finnhub news) → Brain (Gemini via Lovable AI) → Math (0.5% risk execution via OANDA orders)
+- Strategy: Trend Pullback (ATR-Structured Momentum) — fully mechanical, no AI brain
 - OANDA instruments: XAU_USD, EUR_USD, GBP_USD, GBP_JPY, USD_JPY
-- News Blackout: No trades 30min before / 60min after red folder events
-- 0.5% max risk per trade, hardcoded
-- Secrets: OANDA_API_TOKEN, OANDA_ACCOUNT_ID, FINNHUB_API_KEY, LOVABLE_API_KEY (all server-side)
-- Old Deriv/Alpaca code fully removed
-- market-scanner supports ?mode=candles&instrument=X&granularity=H1&count=48 for chart data
+- Secrets: OANDA_API_TOKEN, OANDA_ACCOUNT_ID, FINNHUB_API_KEY, CEREBRAS_API_KEY (chat only)
+
+## Strategy Rules (Mechanical)
+- Entry: SMA200 trend + EMA20 pullback (0.5-1.5 ATR) + momentum candle (body ≥ 70%)
+- Stop Loss: 1.5 × ATR(14)
+- Take Profit: 2R fixed
+- Risk: 0.1% per trade, 1% max total exposure
+- Max 7 concurrent trades, 1 per pair
+- Trade spacing: 5 min between entries
+- Session: London + NY only (07-21 UTC)
+- Circuit breakers: -2R/day OR 3 consecutive losses → halt; -5R/week → halt
+- Correlation filter: max 2 USD-correlated trades simultaneously
+- Market filters: ATR ≥ 0.05% of price, spread ≤ 20% of stop
 
 ## Components
 - src/components/prexfx/ — all dashboard components
 - All panels use real DB data (no mock arrays)
-- PREXI chat has live context awareness (reads bot_config, trades, signals)
+- PREXI chat uses Cerebras for conversational AI (separate from trade logic)
+- market-scanner supports ?mode=candles&instrument=X&granularity=H1&count=48 for chart data

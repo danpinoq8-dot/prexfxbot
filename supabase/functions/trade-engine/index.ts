@@ -11,12 +11,36 @@ const INSTRUMENTS: Record<string, string> = {
   XAU_USD: "XAU/USD", EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", GBP_JPY: "GBP/JPY", USD_JPY: "USD/JPY",
 };
 
-// ── FIXED RISK: exactly 0.5% per trade, no more, no less ──
-const FIXED_RISK_PERCENT = 0.5;
+// USD-correlated pairs for correlation filter
+const USD_CORRELATED = new Set(["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"]);
 
-// ── CONFIDENCE: only execute signals with >= 80% confidence ──
-const MIN_CONFIDENCE = 80;
+// ── STRATEGY CONSTANTS ──
+const RISK_PERCENT = 0.1;       // 0.1% per trade
+const MAX_TOTAL_RISK = 1.0;     // 1% total exposure
+const MAX_CONCURRENT = 7;
+const SMA_PERIOD = 200;
+const EMA_PERIOD = 20;
+const ATR_PERIOD = 14;
+const ATR_SL_MULT = 1.5;
+const RR_TARGET = 2;
+const PULLBACK_MIN_ATR = 0.5;
+const PULLBACK_MAX_ATR = 1.5;
+const MOMENTUM_BODY_RATIO = 0.70;
+const TRADE_SPACING_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_DAILY_LOSS_R = 2;
+const MAX_CONSECUTIVE_LOSSES = 3;
+const MAX_WEEKLY_LOSS_R = 5;
+const MAX_USD_CORRELATED = 2;
+const MIN_ATR_PRICE_RATIO = 0.0005; // ATR >= 0.05% of price
+const MAX_SPREAD_STOP_RATIO = 0.20;  // Spread <= 20% of stop
 
+// ── Session filter: London (07-16 UTC) or NY (12-21 UTC) ──
+function isActiveTradingSession(): boolean {
+  const hour = new Date().getUTCHours();
+  return hour >= 7 && hour <= 21; // Combined London + NY window
+}
+
+// ── OANDA helpers ──
 async function oandaFetch(path: string, token: string, options?: RequestInit) {
   const res = await fetch(`${OANDA_API}${path}`, {
     ...options,
@@ -29,78 +53,170 @@ async function oandaFetch(path: string, token: string, options?: RequestInit) {
   return res.json();
 }
 
-async function cerebrasChat(apiKey: string, messages: any[], retries = 2): Promise<string> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "qwen-3-235b-a22b-instruct-2507", messages, temperature: 0.2, max_tokens: 2000 }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return data.choices?.[0]?.message?.content || "";
-      }
-      if (res.status === 429) {
-        console.warn(`Cerebras rate limited, retry ${attempt + 1}...`);
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-      const errText = await res.text();
-      throw new Error(`Cerebras [${res.status}]: ${errText}`);
-    } catch (e) {
-      if (attempt === retries) throw e;
-      console.warn(`Cerebras attempt ${attempt + 1} failed:`, e);
-    }
-  }
-  throw new Error("Cerebras retries exhausted");
-}
-
-function analyzeStructure(candles: any[]): string {
-  if (candles.length < 10) return "Insufficient data";
-  const last = candles[candles.length - 1];
-  const trend = last.c > candles[0].o ? "BULLISH" : last.c < candles[0].o ? "BEARISH" : "RANGING";
-
-  const swingHighs: { price: number; idx: number }[] = [];
-  const swingLows: { price: number; idx: number }[] = [];
-  for (let i = 2; i < candles.length - 2; i++) {
-    if (candles[i].h > candles[i - 1].h && candles[i].h > candles[i + 1].h)
-      swingHighs.push({ price: candles[i].h, idx: i });
-    if (candles[i].l < candles[i - 1].l && candles[i].l < candles[i + 1].l)
-      swingLows.push({ price: candles[i].l, idx: i });
-  }
-
-  let bos = "NONE";
-  if (swingHighs.length >= 2 && last.c > swingHighs[swingHighs.length - 2].price) bos = "BULLISH_BOS";
-  if (swingLows.length >= 2 && last.c < swingLows[swingLows.length - 2].price) bos = "BEARISH_BOS";
-
-  const fvgs: string[] = [];
-  for (let i = 2; i < candles.length; i++) {
-    if (candles[i].l > candles[i - 2].h) fvgs.push(`BULL_FVG@${candles[i].l.toFixed(5)}`);
-    if (candles[i].h < candles[i - 2].l) fvgs.push(`BEAR_FVG@${candles[i].h.toFixed(5)}`);
-  }
-
-  const orderBlocks: string[] = [];
-  for (let i = 1; i < candles.length - 1; i++) {
-    if (candles[i].c < candles[i].o && candles[i + 1].c > candles[i + 1].o && candles[i + 1].c > candles[i].h)
-      orderBlocks.push(`BULL_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
-    if (candles[i].c > candles[i].o && candles[i + 1].c < candles[i + 1].o && candles[i + 1].c < candles[i].l)
-      orderBlocks.push(`BEAR_OB@${candles[i].l.toFixed(5)}-${candles[i].h.toFixed(5)}`);
-  }
-
-  const highest = Math.max(...candles.map((c: any) => c.h));
-  const lowest = Math.min(...candles.map((c: any) => c.l));
-
-  return `Trend:${trend} | BOS:${bos} | Last:O${last.o} H${last.h} L${last.l} C${last.c} | Range:${lowest}-${highest} | SwingH:${swingHighs.slice(-3).map(s => s.price).join(",")} | SwingL:${swingLows.slice(-3).map(s => s.price).join(",")} | FVG:${fvgs.slice(-3).join(",") || "NONE"} | OB:${orderBlocks.slice(-2).join(",") || "NONE"}`;
-}
-
 async function getCandles(pair: string, granularity: string, count: number, token: string) {
   try {
     const data = await oandaFetch(`/v3/instruments/${pair}/candles?granularity=${granularity}&count=${count}&price=M`, token);
-    return (data.candles || []).map((c: any) => ({
+    return (data.candles || []).filter((c: any) => c.complete !== false).map((c: any) => ({
       o: parseFloat(c.mid.o), h: parseFloat(c.mid.h), l: parseFloat(c.mid.l), c: parseFloat(c.mid.c),
+      time: c.time,
     }));
   } catch { return []; }
+}
+
+// ── Technical indicators ──
+function calcSMA(candles: { c: number }[], period: number): number | null {
+  if (candles.length < period) return null;
+  const slice = candles.slice(-period);
+  return slice.reduce((s, c) => s + c.c, 0) / period;
+}
+
+function calcEMA(candles: { c: number }[], period: number): number | null {
+  if (candles.length < period) return null;
+  const k = 2 / (period + 1);
+  let ema = candles[0].c;
+  for (let i = 1; i < candles.length; i++) {
+    ema = candles[i].c * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+function calcATR(candles: { h: number; l: number; c: number }[], period: number): number | null {
+  if (candles.length < period + 1) return null;
+  const trs: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const tr = Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i - 1].c),
+      Math.abs(candles[i].l - candles[i - 1].c)
+    );
+    trs.push(tr);
+  }
+  // Simple ATR = average of last `period` TRs
+  const slice = trs.slice(-period);
+  return slice.reduce((s, v) => s + v, 0) / slice.length;
+}
+
+// ── Pip value helpers ──
+function getPipSize(pair: string): number {
+  if (pair === "XAU_USD") return 0.01;
+  if (pair.includes("JPY")) return 0.01;
+  return 0.0001;
+}
+
+function getStopDistanceInPips(stopDistance: number, pair: string): number {
+  return stopDistance / getPipSize(pair);
+}
+
+// Approximate pip value in USD for standard lot
+function getPipValueUSD(pair: string, price: number): number {
+  const pipSize = getPipSize(pair);
+  if (pair === "XAU_USD") {
+    // 1 unit XAU = 1 oz. Pip = 0.01. Move of 0.01 on 1 oz = $0.01
+    return 0.01; // per unit (oz)
+  }
+  if (pair.endsWith("_USD") || pair === "EUR_USD" || pair === "GBP_USD") {
+    // Quote is USD: pip value = pipSize * units
+    return pipSize; // per unit
+  }
+  if (pair.startsWith("USD_")) {
+    // Base is USD: pip value = pipSize / price per unit
+    return pipSize / price;
+  }
+  // Cross pairs (e.g. GBP_JPY): approximate via USD
+  // pip value ≈ pipSize / price (rough)
+  return pipSize / price;
+}
+
+// ── Strategy evaluation for one pair ──
+interface TradeSignal {
+  pair: string;
+  direction: "buy" | "sell" | "hold";
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  units: number;
+  atr: number;
+  sma200: number;
+  ema20: number;
+  reasoning: string;
+  confidence: number;
+  stopDistancePips: number;
+}
+
+function evaluatePair(
+  pair: string,
+  candles: { o: number; h: number; l: number; c: number }[],
+  bid: number, ask: number, spread: number,
+  equity: number
+): TradeSignal | null {
+  if (candles.length < SMA_PERIOD + 1) return null;
+
+  const sma200 = calcSMA(candles, SMA_PERIOD);
+  const ema20 = calcEMA(candles, EMA_PERIOD);
+  const atr = calcATR(candles, ATR_PERIOD);
+  if (!sma200 || !ema20 || !atr) return null;
+
+  const last = candles[candles.length - 1];
+  const price = last.c;
+
+  // Market filters
+  // 1. Volatility: ATR >= 0.05% of price
+  if (atr < price * MIN_ATR_PRICE_RATIO) return null;
+
+  // 2. Spread filter: spread <= 20% of (1.5*ATR)
+  const stopDistance = ATR_SL_MULT * atr;
+  if (spread > stopDistance * MAX_SPREAD_STOP_RATIO) return null;
+
+  // Rule 1 — Trend Filter
+  const isBullish = price > sma200;
+  const isBearish = price < sma200;
+  if (!isBullish && !isBearish) return null;
+
+  // Rule 2 — Pullback Condition: price retraced 0.5-1.5 ATR toward EMA20
+  const distToEma = Math.abs(price - ema20);
+  if (distToEma < PULLBACK_MIN_ATR * atr || distToEma > PULLBACK_MAX_ATR * atr) return null;
+
+  // For a valid pullback: in bullish trend, price should be near/above EMA20 (pulled back toward it)
+  // In bearish trend, price should be near/below EMA20
+  if (isBullish && price < ema20 - atr * 0.1) return null; // too deep
+  if (isBearish && price > ema20 + atr * 0.1) return null; // too deep
+
+  // Rule 3 — Entry Trigger: strong momentum candle
+  const body = Math.abs(last.c - last.o);
+  const range = last.h - last.l;
+  if (range <= 0 || body / range < MOMENTUM_BODY_RATIO) return null;
+
+  // Direction must match trend
+  const candleBullish = last.c > last.o;
+  const candleBearish = last.c < last.o;
+  if (isBullish && !candleBullish) return null;
+  if (isBearish && !candleBearish) return null;
+
+  // ── Build signal ──
+  const direction: "buy" | "sell" = isBullish ? "buy" : "sell";
+  const entry = direction === "buy" ? ask : bid;
+  const sl = direction === "buy" ? entry - stopDistance : entry + stopDistance;
+  const tp = direction === "buy" ? entry + stopDistance * RR_TARGET : entry - stopDistance * RR_TARGET;
+
+  // Spread + slippage buffer
+  const slippageBuffer = spread * 0.5;
+  const effectiveStop = stopDistance + spread + slippageBuffer;
+
+  // Position sizing: risk / (effective stop in dollar terms per unit)
+  const riskAmount = equity * RISK_PERCENT / 100;
+  const pipValue = getPipValueUSD(pair, entry);
+  const effectiveStopPips = effectiveStop / getPipSize(pair);
+  const units = Math.floor(riskAmount / (effectiveStopPips * pipValue));
+
+  if (units <= 0) return null;
+
+  const reasoning = `Trend Pullback | ${direction.toUpperCase()} | SMA200=${sma200.toFixed(5)} EMA20=${ema20.toFixed(5)} ATR=${atr.toFixed(5)} | Price ${price.toFixed(5)} | Pullback ${distToEma.toFixed(5)} (${(distToEma/atr).toFixed(2)} ATR) | Candle body ${(body/range*100).toFixed(0)}% | SL=${sl.toFixed(5)} TP=${tp.toFixed(5)} | Risk $${riskAmount.toFixed(2)}`;
+
+  return {
+    pair, direction, entry, stopLoss: sl, takeProfit: tp, units,
+    atr, sma200, ema20, reasoning, confidence: 85,
+    stopDistancePips: getStopDistanceInPips(stopDistance, pair),
+  };
 }
 
 serve(async (req) => {
@@ -109,12 +225,10 @@ serve(async (req) => {
   try {
     const OANDA_API_TOKEN = Deno.env.get("OANDA_API_TOKEN")!;
     const OANDA_ACCOUNT_ID = Deno.env.get("OANDA_ACCOUNT_ID")!;
-    const CEREBRAS_API_KEY = Deno.env.get("CEREBRAS_API_KEY")!;
-    const FINNHUB_API_KEY = Deno.env.get("FINNHUB_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID || !CEREBRAS_API_KEY) throw new Error("Missing secrets");
+    if (!OANDA_API_TOKEN || !OANDA_ACCOUNT_ID) throw new Error("Missing OANDA secrets");
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -126,17 +240,51 @@ serve(async (req) => {
       });
     }
 
-    // 2. Sync OANDA account
+    // 2. Session filter
+    if (!isActiveTradingSession()) {
+      return new Response(JSON.stringify({ status: "outside_session", message: "Outside London/NY session" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 3. Daily / weekly circuit breakers
+    const dailyLossR = Number(config.daily_loss_r || 0);
+    const weeklyLossR = Number(config.weekly_loss_r || 0);
+    const consecutiveLosses = Number(config.consecutive_losses || 0);
+
+    if (dailyLossR >= MAX_DAILY_LOSS_R || consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
+      return new Response(JSON.stringify({ status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (weeklyLossR >= MAX_WEEKLY_LOSS_R) {
+      return new Response(JSON.stringify({ status: "weekly_halt", weekly_loss_r: weeklyLossR }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 4. Trade spacing: 5 min since last trade
+    if (config.last_trade_at) {
+      const elapsed = Date.now() - new Date(config.last_trade_at).getTime();
+      if (elapsed < TRADE_SPACING_MS) {
+        return new Response(JSON.stringify({ status: "trade_spacing", seconds_remaining: Math.ceil((TRADE_SPACING_MS - elapsed) / 1000) }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // 5. Sync OANDA account
     const accountData = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/summary`, OANDA_API_TOKEN);
     const account = accountData.account;
     const realBalance = parseFloat(account.balance);
+    const equity = parseFloat(account.NAV || account.balance);
     const unrealizedPL = parseFloat(account.unrealizedPL || "0");
 
     await supabase.from("bot_config").update({
       balance: realBalance, daily_pnl: unrealizedPL, updated_at: new Date().toISOString(),
     }).eq("id", config.id);
 
-    // 3. Sync open trades P/L from OANDA (in dollars, not points)
+    // 6. Sync open trades from OANDA
     try {
       const openTradesData = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/openTrades`, OANDA_API_TOKEN);
       const oandaOpenTrades = openTradesData.trades || [];
@@ -172,6 +320,21 @@ serve(async (req) => {
             await supabase.from("trades")
               .update({ status: "closed", profit_loss: finalPL, closed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
               .eq("id", dbt.id);
+
+            // Update circuit breaker counters
+            const riskAmount = realBalance * RISK_PERCENT / 100;
+            const rLost = riskAmount > 0 ? -finalPL / riskAmount : 0;
+            if (finalPL < 0) {
+              await supabase.from("bot_config").update({
+                consecutive_losses: (consecutiveLosses + 1),
+                daily_loss_r: dailyLossR + rLost,
+                weekly_loss_r: weeklyLossR + rLost,
+              }).eq("id", config.id);
+            } else if (finalPL > 0) {
+              await supabase.from("bot_config").update({
+                consecutive_losses: 0, // reset on win
+              }).eq("id", config.id);
+            }
           }
         }
       }
@@ -179,7 +342,7 @@ serve(async (req) => {
       console.error("Trade sync error:", e);
     }
 
-    // 4. Get prices
+    // 7. Get prices
     const instruments = Object.keys(INSTRUMENTS).join(",");
     const pricingData = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/pricing?instruments=${instruments}`, OANDA_API_TOKEN);
     const prices: Record<string, { bid: number; ask: number; spread: number }> = {};
@@ -189,186 +352,137 @@ serve(async (req) => {
       prices[p.instrument] = { bid, ask, spread: ask - bid };
     }
 
-    // 5. Multi-timeframe structure (H4 + H1 + M15)
-    const mtfAnalysis: Record<string, string> = {};
-    for (const pair of Object.keys(INSTRUMENTS)) {
-      const [h4, h1, m15] = await Promise.all([
-        getCandles(pair, "H4", 20, OANDA_API_TOKEN),
-        getCandles(pair, "H1", 30, OANDA_API_TOKEN),
-        getCandles(pair, "M15", 20, OANDA_API_TOKEN),
-      ]);
-      mtfAnalysis[pair] = [`H4: ${analyzeStructure(h4)}`, `H1: ${analyzeStructure(h1)}`, `M15: ${analyzeStructure(m15)}`].join("\n");
-    }
+    // 8. Check open positions
+    const { data: openTrades } = await supabase.from("trades")
+      .select("pair, direction, status, profit_loss, instrument")
+      .eq("status", "open");
 
-    // 6. Order Book
-    let orderBookInfo = "";
-    try {
-      const obData = await oandaFetch(`/v3/instruments/XAU_USD/orderBook`, OANDA_API_TOKEN);
-      if (obData.orderBook) {
-        const buckets = obData.orderBook.buckets || [];
-        const sorted = [...buckets].sort((a: any, b: any) =>
-          (parseFloat(b.longCountPercent) + parseFloat(b.shortCountPercent)) -
-          (parseFloat(a.longCountPercent) + parseFloat(a.shortCountPercent))
-        );
-        orderBookInfo = `XAU_USD ORDER BOOK:\n${sorted.slice(0, 5).map((b: any) =>
-          `  Price ${b.price}: Longs ${b.longCountPercent}% | Shorts ${b.shortCountPercent}%`
-        ).join("\n")}`;
-      }
-    } catch { orderBookInfo = "Order book unavailable"; }
-
-    // 7. News
-    let newsHeadlines = "";
-    if (FINNHUB_API_KEY) {
-      try {
-        const newsRes = await fetch(`https://finnhub.io/api/v1/news?category=forex&token=${FINNHUB_API_KEY}`);
-        const raw = await newsRes.json();
-        if (Array.isArray(raw)) newsHeadlines = raw.slice(0, 5).map((n: any) => n.headline).join(" | ");
-      } catch { /* skip */ }
-    }
-
-    // 8. Recent trades + build list of pairs with open positions
-    const { data: recentTrades } = await supabase.from("trades")
-      .select("pair, direction, status, profit_loss, created_at, instrument")
-      .order("created_at", { ascending: false }).limit(20);
-
-    const openPositions = (recentTrades || []).filter(t => t.status === "open");
-
-    // ── NEW: Build a set of pairs that already have open trades (any direction) ──
+    const openPositions = openTrades || [];
     const pairsWithOpenTrades = new Set<string>();
     for (const t of openPositions) {
-      // Add both the OANDA instrument key and the display pair
       if (t.instrument) pairsWithOpenTrades.add(t.instrument);
       if (t.pair) pairsWithOpenTrades.add(t.pair);
     }
 
-    // 9. BRAIN — Cerebras with SMC/ICT + UPDATED RULES
-    const riskAmount = realBalance * FIXED_RISK_PERCENT / 100;
-    const brainPrompt = `You are PREXI, an autonomous institutional forex AI using Smart Money Concepts (SMC) and ICT methodology.
-
-ACCOUNT: Balance $${realBalance.toFixed(0)} | Open: ${account.openTradeCount} | NAV: $${parseFloat(account.NAV || account.balance).toFixed(0)} | Unrealized: $${unrealizedPL.toFixed(2)}
-RISK: EXACTLY ${FIXED_RISK_PERCENT}% per trade = $${riskAmount.toFixed(2)} risk — NO MORE, NO LESS. Adjust lot/units to match.
-NEWS BLACKOUT: ${config.news_blackout_active ? "ACTIVE — NO TRADES" : "CLEAR"}
-MAX NEW POSITIONS: ${Math.max(0, 3 - (parseInt(account.openTradeCount) || 0))}
-PAIRS WITH OPEN TRADES (DO NOT OPEN NEW TRADES ON THESE): ${pairsWithOpenTrades.size > 0 ? Array.from(pairsWithOpenTrades).join(", ") : "None"}
-
-PRICES: ${Object.entries(prices).map(([k, v]) => `${k}: Bid ${v.bid} Ask ${v.ask} Spread ${v.spread.toFixed(5)}`).join(" | ")}
-
-MULTI-TIMEFRAME STRUCTURE (H4 > H1 > M15):
-${Object.entries(mtfAnalysis).map(([k, v]) => `--- ${k} ---\n${v}`).join("\n")}
-
-${orderBookInfo}
-
-NEWS: ${newsHeadlines || "None"}
-
-OPEN POSITIONS: ${openPositions.map(t => `${t.pair} ${t.direction} P/L:$${t.profit_loss}`).join(", ") || "None"}
-
-ICT/SMC EXECUTION RULES:
-1. LIQUIDITY FIRST: Only enter AFTER price sweeps a liquidity pool.
-2. ORDER BLOCK ENTRY: Enter at a validated Order Block.
-3. FAIR VALUE GAP: Price must fill into an FVG for optimal entry.
-4. BOS/CHoCH: Confirm Break of Structure on H1 before entering on M15.
-5. MULTI-TIMEFRAME ALIGNMENT: H4 sets bias, H1 confirms, M15 gives entry.
-6. UNIT CALCULATION: risk_amount = balance × 0.005. units = risk_amount / abs(entry_price - stop_loss_price). SL MUST be placed so that if hit, the loss equals EXACTLY 0.5% of the account balance ($${riskAmount.toFixed(2)}). For XAU this gives ounces, for forex it gives currency units. P/L MUST be in DOLLARS not points.
-7. NEVER place a trade on a pair that already has an open position — not even in the opposite direction. PAIRS WITH OPEN TRADES listed above are BLOCKED.
-8. If no ICT confluence exists: HOLD. Patience is the edge.
-9. TRADE CLOSURE: The ONLY reasons to close a trade are: (a) it hits the stop loss (0.5% of balance), or (b) you determine with high certainty that the trade has ZERO chance of recovery and price has moved decisively against the position. If there is STILL a reasonable chance of the trade winning, KEEP IT OPEN — do not panic-close.
-10. CONFIDENCE: Only recommend a trade if confidence is >= ${MIN_CONFIDENCE}. Below that, signal "hold".
-
-Respond ONLY with JSON:
-{"signals":[{"pair":"XAU_USD","signal":"buy|sell|hold","confidence":0-100,"reasoning":"ICT logic","entry_target":0,"stop_loss":0,"take_profit":0,"units":1}],"market_summary":"one line overview"}`;
-
-    const aiContent = await cerebrasChat(CEREBRAS_API_KEY, [{ role: "user", content: brainPrompt }]);
-
-    let brainDecision: any;
-    try {
-      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-      brainDecision = jsonMatch ? JSON.parse(jsonMatch[0]) : { signals: [], market_summary: "Parse error" };
-    } catch {
-      brainDecision = { signals: [], market_summary: "Failed to parse AI response" };
+    // Max concurrent check
+    if (openPositions.length >= MAX_CONCURRENT) {
+      await supabase.from("bot_config").update({
+        last_scan_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", config.id);
+      return new Response(JSON.stringify({ status: "max_concurrent_reached", open: openPositions.length }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    // 10. Execute trades
+    // Correlation filter: count USD-correlated open trades
+    const usdCorrelatedOpen = openPositions.filter(t => USD_CORRELATED.has(t.instrument || "")).length;
+
+    // 9. Fetch candles (H1 with 210 bars for SMA200 + buffer) and evaluate each pair
     const results: any[] = [];
-    for (const signal of (brainDecision.signals || [])) {
+    const signals: TradeSignal[] = [];
 
-      // ── NEW: Block duplicate pair trades (any direction) ──
-      if (pairsWithOpenTrades.has(signal.pair) || pairsWithOpenTrades.has(INSTRUMENTS[signal.pair] || "")) {
-        console.warn(`BLOCKED: ${signal.pair} already has an open trade — skipping`);
-        results.push({ pair: signal.pair, executed: false, reason: "duplicate_pair_blocked" });
-
-        // Still save the signal for audit
-        await supabase.from("trade_signals").insert({
-          pair: INSTRUMENTS[signal.pair] || signal.pair,
-          signal: signal.signal, confidence: signal.confidence,
-          reasoning: `[BLOCKED — duplicate pair] ${signal.reasoning}`,
-          oanda_data: prices, gemini_analysis: aiContent, executed: false,
-        });
+    for (const pair of Object.keys(INSTRUMENTS)) {
+      // Skip if already has open trade
+      if (pairsWithOpenTrades.has(pair) || pairsWithOpenTrades.has(INSTRUMENTS[pair])) {
+        results.push({ pair, executed: false, reason: "duplicate_pair" });
         continue;
       }
 
+      // Correlation cap
+      if (USD_CORRELATED.has(pair) && usdCorrelatedOpen >= MAX_USD_CORRELATED) {
+        results.push({ pair, executed: false, reason: "usd_correlation_cap" });
+        continue;
+      }
+
+      const p = prices[pair];
+      if (!p) { results.push({ pair, executed: false, reason: "no_price" }); continue; }
+
+      // Get H1 candles for SMA200 + ATR + EMA
+      const candles = await getCandles(pair, "H1", SMA_PERIOD + ATR_PERIOD + 5, OANDA_API_TOKEN);
+      if (candles.length < SMA_PERIOD) {
+        results.push({ pair, executed: false, reason: "insufficient_candles" });
+        continue;
+      }
+
+      const signal = evaluatePair(pair, candles, p.bid, p.ask, p.spread, equity);
+      if (!signal) {
+        results.push({ pair, executed: false, reason: "no_setup" });
+        continue;
+      }
+
+      // Total risk check: each open trade ≈ 0.1% risk
+      const currentRisk = openPositions.length * RISK_PERCENT;
+      if (currentRisk + RISK_PERCENT > MAX_TOTAL_RISK) {
+        results.push({ pair, executed: false, reason: "total_risk_cap" });
+        continue;
+      }
+
+      signals.push(signal);
+    }
+
+    // 10. Execute signals
+    for (const signal of signals) {
+      // Save signal for audit
       const { data: savedSignal } = await supabase.from("trade_signals").insert({
         pair: INSTRUMENTS[signal.pair] || signal.pair,
-        signal: signal.signal,
+        signal: signal.direction,
         confidence: signal.confidence,
         reasoning: signal.reasoning,
         oanda_data: prices,
-        gemini_analysis: aiContent,
         executed: false,
       }).select().single();
 
-      // ── UPDATED: confidence >= 80 (was > 75) ──
-      if (signal.signal !== "hold" && signal.confidence >= MIN_CONFIDENCE) {
+      const signedUnits = signal.direction === "sell" ? -signal.units : signal.units;
 
-        // ── UPDATED: enforce exact 0.5% risk via unit calculation ──
-        let units: number;
-        if (signal.stop_loss && signal.entry_target && Math.abs(signal.entry_target - signal.stop_loss) > 0) {
-          units = Math.round(riskAmount / Math.abs(signal.entry_target - signal.stop_loss));
-        } else {
-          // Fallback: use AI-suggested units but cap at risk amount
-          units = Math.abs(signal.units || 1);
-        }
-        const signedUnits = signal.signal === "sell" ? -units : units;
+      const orderBody: any = {
+        order: {
+          type: "MARKET", instrument: signal.pair, units: signedUnits.toString(),
+          timeInForce: "FOK", positionFill: "DEFAULT",
+          stopLossOnFill: { price: signal.stopLoss.toString(), timeInForce: "GTC" },
+          takeProfitOnFill: { price: signal.takeProfit.toString() },
+        },
+      };
 
-        const orderBody: any = {
-          order: {
-            type: "MARKET", instrument: signal.pair, units: signedUnits.toString(),
-            timeInForce: "FOK", positionFill: "DEFAULT",
-          },
-        };
-        if (signal.stop_loss) orderBody.order.stopLossOnFill = { price: signal.stop_loss.toString(), timeInForce: "GTC" };
-        if (signal.take_profit) orderBody.order.takeProfitOnFill = { price: signal.take_profit.toString() };
+      try {
+        const orderResult = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/orders`, OANDA_API_TOKEN, {
+          method: "POST", body: JSON.stringify(orderBody),
+        });
 
-        try {
-          const orderResult = await oandaFetch(`/v3/accounts/${OANDA_ACCOUNT_ID}/orders`, OANDA_API_TOKEN, {
-            method: "POST", body: JSON.stringify(orderBody),
-          });
+        const fill = orderResult.orderFillTransaction;
+        if (fill) {
+          const riskAmount = equity * RISK_PERCENT / 100;
+          const { data: trade } = await supabase.from("trades").insert({
+            pair: INSTRUMENTS[signal.pair] || signal.pair,
+            direction: signal.direction,
+            entry_price: parseFloat(fill.price || "0"),
+            stake: Math.abs(signal.units) * parseFloat(fill.price || "0"),
+            status: "open", broker: "oanda",
+            broker_order_id: fill.orderID,
+            broker_trade_id: fill.tradeOpened?.tradeID || null,
+            instrument: signal.pair, units: signedUnits,
+            stop_loss: signal.stopLoss, take_profit: signal.takeProfit,
+            broker_payload: orderResult,
+            signal_reason: signal.reasoning,
+          }).select().single();
 
-          const fill = orderResult.orderFillTransaction;
-          if (fill) {
-            const { data: trade } = await supabase.from("trades").insert({
-              pair: INSTRUMENTS[signal.pair] || signal.pair,
-              direction: signal.signal, entry_price: parseFloat(fill.price || "0"),
-              stake: Math.abs(units) * parseFloat(fill.price || "0"),
-              status: "open", broker: "oanda",
-              broker_order_id: fill.orderID, broker_trade_id: fill.tradeOpened?.tradeID || null,
-              instrument: signal.pair, units: signedUnits,
-              stop_loss: signal.stop_loss, take_profit: signal.take_profit,
-              broker_payload: orderResult, signal_reason: signal.reasoning,
-            }).select().single();
-
-            if (savedSignal && trade) {
-              await supabase.from("trade_signals").update({ executed: true, trade_id: trade.id }).eq("id", savedSignal.id);
-            }
-            results.push({ pair: signal.pair, executed: true, direction: signal.signal, units: Math.abs(units), risk_amount: riskAmount });
-          } else {
-            results.push({ pair: signal.pair, executed: false, reason: orderResult.orderRejectTransaction?.rejectReason || "no fill" });
+          if (savedSignal && trade) {
+            await supabase.from("trade_signals").update({ executed: true, trade_id: trade.id }).eq("id", savedSignal.id);
           }
-        } catch (e) {
-          console.error(`Execution failed ${signal.pair}:`, e);
-          results.push({ pair: signal.pair, executed: false, error: String(e) });
+
+          // Update last_trade_at
+          await supabase.from("bot_config").update({ last_trade_at: new Date().toISOString() }).eq("id", config.id);
+
+          results.push({
+            pair: signal.pair, executed: true, direction: signal.direction,
+            units: signal.units, risk_amount: riskAmount,
+            sl: signal.stopLoss, tp: signal.takeProfit, atr: signal.atr,
+          });
+        } else {
+          results.push({ pair: signal.pair, executed: false, reason: orderResult.orderRejectTransaction?.rejectReason || "no_fill" });
         }
-      } else {
-        results.push({ pair: signal.pair, executed: false, reason: signal.confidence < MIN_CONFIDENCE ? `confidence_${signal.confidence}_below_${MIN_CONFIDENCE}` : "hold" });
+      } catch (e) {
+        console.error(`Execution failed ${signal.pair}:`, e);
+        results.push({ pair: signal.pair, executed: false, error: String(e) });
       }
     }
 
@@ -376,13 +490,17 @@ Respond ONLY with JSON:
       last_scan_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq("id", config.id);
 
-    console.log(`Scan complete: ${results.length} signals, ${results.filter(r => r.executed).length} executed (risk=${FIXED_RISK_PERCENT}%, min_conf=${MIN_CONFIDENCE})`);
+    const executed = results.filter(r => r.executed).length;
+    console.log(`Scan complete: ${results.length} pairs checked, ${executed} executed | Strategy: Trend Pullback ATR`);
 
     return new Response(JSON.stringify({
-      status: "scan_complete", market_summary: brainDecision.market_summary,
-      account: { balance: realBalance, open_trades: account.openTradeCount, unrealized_pl: unrealizedPL },
-      risk_config: { fixed_risk_percent: FIXED_RISK_PERCENT, risk_amount: riskAmount, min_confidence: MIN_CONFIDENCE },
-      results, engine: "cerebras", scanned_at: new Date().toISOString(),
+      status: "scan_complete",
+      strategy: "trend_pullback_atr",
+      account: { balance: realBalance, equity, open_trades: openPositions.length, unrealized_pl: unrealizedPL },
+      risk_config: { risk_percent: RISK_PERCENT, max_total: MAX_TOTAL_RISK, max_concurrent: MAX_CONCURRENT },
+      circuit_breakers: { daily_loss_r: dailyLossR, weekly_loss_r: weeklyLossR, consecutive_losses: consecutiveLosses },
+      results,
+      scanned_at: new Date().toISOString(),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (e) {
