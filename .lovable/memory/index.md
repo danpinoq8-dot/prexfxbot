@@ -24,7 +24,7 @@ PrexFx (PREXFX) - AI Risk Architect trading dashboard
 - Trade spacing: 5 min between entries
 - Session: 24/7 (no session filter)
 - Circuit breakers: -2R/day OR 3 consecutive losses → halt; -5R/week → halt
-- Correlation filter: max 2 USD-correlated trades simultaneously
+- Correlation filter: max 3 USD-correlated trades simultaneously
 - Market filters: ATR ≥ 0.05% of price, spread ≤ 20% of stop
 
 ## Components
