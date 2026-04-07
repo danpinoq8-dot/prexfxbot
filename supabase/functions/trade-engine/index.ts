@@ -125,6 +125,18 @@ function getPipValueUSD(pair: string, price: number): number {
   return pipSize / price;
 }
 
+
+// ── OANDA price precision ──
+function getOandaPrecision(pair: string): number {
+  if (pair === "XAU_USD") return 3;
+  if (pair.includes("JPY")) return 3;
+  return 5;
+}
+
+function formatPrice(price: number, pair: string): string {
+  return price.toFixed(getOandaPrecision(pair));
+}
+
 // ── Strategy evaluation for one pair ──
 interface TradeSignal {
   pair: string;
@@ -430,8 +442,8 @@ serve(async (req) => {
         order: {
           type: "MARKET", instrument: signal.pair, units: signedUnits.toString(),
           timeInForce: "FOK", positionFill: "DEFAULT",
-          stopLossOnFill: { price: signal.stopLoss.toString(), timeInForce: "GTC" },
-          takeProfitOnFill: { price: signal.takeProfit.toString() },
+          stopLossOnFill: { price: formatPrice(signal.stopLoss, signal.pair), timeInForce: "GTC" },
+          takeProfitOnFill: { price: formatPrice(signal.takeProfit, signal.pair) },
         },
       };
 
