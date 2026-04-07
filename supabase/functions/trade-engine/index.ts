@@ -9,10 +9,13 @@ const corsHeaders = {
 const OANDA_API = "https://api-fxpractice.oanda.com";
 const INSTRUMENTS: Record<string, string> = {
   XAU_USD: "XAU/USD", EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", GBP_JPY: "GBP/JPY", USD_JPY: "USD/JPY",
+  AUD_USD: "AUD/USD", NZD_USD: "NZD/USD", USD_CAD: "USD/CAD", USD_CHF: "USD/CHF",
+  EUR_GBP: "EUR/GBP", EUR_JPY: "EUR/JPY", EUR_AUD: "EUR/AUD", GBP_AUD: "GBP/AUD",
+  AUD_JPY: "AUD/JPY", CAD_JPY: "CAD/JPY", NZD_JPY: "NZD/JPY", GBP_CAD: "GBP/CAD",
 };
 
 // USD-correlated pairs for correlation filter
-const USD_CORRELATED = new Set(["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD"]);
+const USD_CORRELATED = new Set(["EUR_USD", "GBP_USD", "USD_JPY", "XAU_USD", "AUD_USD", "NZD_USD", "USD_CAD", "USD_CHF"]);
 
 // ── STRATEGY CONSTANTS ──
 const RISK_PERCENT = 0.1;       // 0.1% per trade
@@ -30,15 +33,10 @@ const TRADE_SPACING_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DAILY_LOSS_R = 2;
 const MAX_CONSECUTIVE_LOSSES = 3;
 const MAX_WEEKLY_LOSS_R = 5;
-const MAX_USD_CORRELATED = 2;
-const MIN_ATR_PRICE_RATIO = 0.0005; // ATR >= 0.05% of price
+const MAX_USD_CORRELATED = 3;
 const MAX_SPREAD_STOP_RATIO = 0.20;  // Spread <= 20% of stop
 
-// ── Session filter: London (07-16 UTC) or NY (12-21 UTC) ──
-function isActiveTradingSession(): boolean {
-  const hour = new Date().getUTCHours();
-  return hour >= 7 && hour <= 21; // Combined London + NY window
-}
+const MIN_ATR_PRICE_RATIO = 0.0005; // ATR >= 0.05% of price
 
 // ── OANDA helpers ──
 async function oandaFetch(path: string, token: string, options?: RequestInit) {
@@ -240,12 +238,6 @@ serve(async (req) => {
       });
     }
 
-    // 2. Session filter
-    if (!isActiveTradingSession()) {
-      return new Response(JSON.stringify({ status: "outside_session", message: "Outside London/NY session" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // 3. Daily / weekly circuit breakers
     const dailyLossR = Number(config.daily_loss_r || 0);
