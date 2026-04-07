@@ -8,12 +8,23 @@ const corsHeaders = {
 const OANDA_API = "https://api-fxpractice.oanda.com";
 
 const PAIRS = [
-  { instrument: "EUR_USD", display: "EUR/USD" },
-  { instrument: "GBP_JPY", display: "GBP/JPY" },
   { instrument: "XAU_USD", display: "XAU/USD" },
-  { instrument: "USD_JPY", display: "USD/JPY" },
+  { instrument: "EUR_USD", display: "EUR/USD" },
   { instrument: "GBP_USD", display: "GBP/USD" },
+  { instrument: "GBP_JPY", display: "GBP/JPY" },
+  { instrument: "USD_JPY", display: "USD/JPY" },
   { instrument: "AUD_USD", display: "AUD/USD" },
+  { instrument: "NZD_USD", display: "NZD/USD" },
+  { instrument: "USD_CAD", display: "USD/CAD" },
+  { instrument: "USD_CHF", display: "USD/CHF" },
+  { instrument: "EUR_GBP", display: "EUR/GBP" },
+  { instrument: "EUR_JPY", display: "EUR/JPY" },
+  { instrument: "EUR_AUD", display: "EUR/AUD" },
+  { instrument: "GBP_AUD", display: "GBP/AUD" },
+  { instrument: "AUD_JPY", display: "AUD/JPY" },
+  { instrument: "CAD_JPY", display: "CAD/JPY" },
+  { instrument: "NZD_JPY", display: "NZD/JPY" },
+  { instrument: "GBP_CAD", display: "GBP/CAD" },
 ];
 
 serve(async (req) => {
