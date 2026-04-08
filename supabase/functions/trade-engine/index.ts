@@ -164,68 +164,58 @@ function evaluatePair(
   const sma200 = calcSMA(candles, SMA_PERIOD);
   const ema20 = calcEMA(candles, EMA_PERIOD);
   const atr = calcATR(candles, ATR_PERIOD);
-  if (!sma200 || !ema20 || !atr) return null;
+  if (!sma200 || !ema20 || !atr) return { signal: null, reason: "indicator_fail" };
 
   const last = candles[candles.length - 1];
   const price = last.c;
-
-  // Market filters
-  // 1. Volatility: ATR >= 0.05% of price
-  if (atr < price * MIN_ATR_PRICE_RATIO) return null;
-
-  // 2. Spread filter: spread <= 20% of (1.5*ATR)
   const stopDistance = ATR_SL_MULT * atr;
-  if (spread > stopDistance * MAX_SPREAD_STOP_RATIO) return null;
 
-  // Rule 1 — Trend Filter
+  if (atr < price * MIN_ATR_PRICE_RATIO) return { signal: null, reason: `low_vol(ATR=${atr.toFixed(6)})` };
+  if (spread > stopDistance * MAX_SPREAD_STOP_RATIO) return { signal: null, reason: `spread(${spread.toFixed(5)}>${(stopDistance*MAX_SPREAD_STOP_RATIO).toFixed(5)})` };
+
   const isBullish = price > sma200;
   const isBearish = price < sma200;
-  if (!isBullish && !isBearish) return null;
+  if (!isBullish && !isBearish) return { signal: null, reason: "no_trend" };
 
-  // Rule 2 — Pullback Condition: price retraced 0.2-2.5 ATR toward EMA20
   const distToEma = Math.abs(price - ema20);
-  if (distToEma < PULLBACK_MIN_ATR * atr || distToEma > PULLBACK_MAX_ATR * atr) return null;
+  const pbATR = distToEma / atr;
+  if (pbATR < PULLBACK_MIN_ATR || pbATR > PULLBACK_MAX_ATR) return { signal: null, reason: `pullback(${pbATR.toFixed(2)}ATR)` };
 
-  // For a valid pullback: in bullish trend, price should not be too far below EMA20
-  // In bearish trend, price should not be too far above EMA20
-  if (isBullish && price < ema20 - atr * 0.5) return null;
-  if (isBearish && price > ema20 + atr * 0.5) return null;
+  if (isBullish && price < ema20 - atr * 0.5) return { signal: null, reason: "too_deep_bull" };
+  if (isBearish && price > ema20 + atr * 0.5) return { signal: null, reason: "too_deep_bear" };
 
-  // Rule 3 — Entry Trigger: strong momentum candle
   const body = Math.abs(last.c - last.o);
   const range = last.h - last.l;
-  if (range <= 0 || body / range < MOMENTUM_BODY_RATIO) return null;
+  if (range <= 0 || body / range < MOMENTUM_BODY_RATIO) return { signal: null, reason: `candle(${range>0?(body/range*100).toFixed(0):'0'}%)` };
 
-  // Direction must match trend
   const candleBullish = last.c > last.o;
   const candleBearish = last.c < last.o;
-  if (isBullish && !candleBullish) return null;
-  if (isBearish && !candleBearish) return null;
+  if (isBullish && !candleBullish) return { signal: null, reason: "candle_vs_trend" };
+  if (isBearish && !candleBearish) return { signal: null, reason: "candle_vs_trend" };
 
-  // ── Build signal ──
   const direction: "buy" | "sell" = isBullish ? "buy" : "sell";
   const entry = direction === "buy" ? ask : bid;
   const sl = direction === "buy" ? entry - stopDistance : entry + stopDistance;
   const tp = direction === "buy" ? entry + stopDistance * RR_TARGET : entry - stopDistance * RR_TARGET;
 
-  // Spread + slippage buffer
   const slippageBuffer = spread * 0.5;
   const effectiveStop = stopDistance + spread + slippageBuffer;
-
-  // Position sizing: risk / (effective stop in dollar terms per unit)
   const riskAmount = equity * RISK_PERCENT / 100;
   const pipValue = getPipValueUSD(pair, entry);
   const effectiveStopPips = effectiveStop / getPipSize(pair);
   const units = Math.floor(riskAmount / (effectiveStopPips * pipValue));
 
-  if (units <= 0) return null;
+  if (units <= 0) return { signal: null, reason: "zero_units" };
 
-  const reasoning = `Trend Pullback | ${direction.toUpperCase()} | SMA200=${sma200.toFixed(5)} EMA20=${ema20.toFixed(5)} ATR=${atr.toFixed(5)} | Price ${price.toFixed(5)} | Pullback ${distToEma.toFixed(5)} (${(distToEma/atr).toFixed(2)} ATR) | Candle body ${(body/range*100).toFixed(0)}% | SL=${sl.toFixed(5)} TP=${tp.toFixed(5)} | Risk $${riskAmount.toFixed(2)}`;
+  const reasoning = `Trend Pullback | ${direction.toUpperCase()} | SMA200=${sma200.toFixed(5)} EMA20=${ema20.toFixed(5)} ATR=${atr.toFixed(5)} | Price ${price.toFixed(5)} | Pullback ${pbATR.toFixed(2)} ATR | Body ${(body/range*100).toFixed(0)}%`;
 
   return {
-    pair, direction, entry, stopLoss: sl, takeProfit: tp, units,
-    atr, sma200, ema20, reasoning, confidence: 85,
-    stopDistancePips: getStopDistanceInPips(stopDistance, pair),
+    signal: {
+      pair, direction, entry, stopLoss: sl, takeProfit: tp, units,
+      atr, sma200, ema20, reasoning, confidence: 85,
+      stopDistancePips: getStopDistanceInPips(stopDistance, pair),
+    },
+    reason: "valid",
   };
 }
 
