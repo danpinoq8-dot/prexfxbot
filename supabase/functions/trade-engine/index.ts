@@ -30,6 +30,7 @@ const PULLBACK_MIN_ATR = 0.1;
 const PULLBACK_MAX_ATR = 6.0;
 const MOMENTUM_BODY_RATIO = 0.40;
 const TRADE_SPACING_MS = 5 * 60 * 1000; // 5 minutes
+const ORPHAN_TRADE_GRACE_MS = 2 * 60 * 1000;
 const MAX_DAILY_LOSS_R = 2;
 const MAX_CONSECUTIVE_LOSSES = 3;
 const MAX_WEEKLY_LOSS_R = 5;
@@ -157,7 +158,8 @@ function evaluatePair(
   pair: string,
   candles: { o: number; h: number; l: number; c: number }[],
   bid: number, ask: number, spread: number,
-  equity: number
+  equity: number,
+  riskPercent: number
 ): { signal: TradeSignal | null; reason: string } {
   if (candles.length < SMA_PERIOD + 1) return { signal: null, reason: "insufficient_candles" };
 
@@ -200,7 +202,7 @@ function evaluatePair(
 
   const slippageBuffer = spread * 0.5;
   const effectiveStop = stopDistance + spread + slippageBuffer;
-  const riskAmount = equity * RISK_PERCENT / 100;
+  const riskAmount = equity * riskPercent / 100;
   const pipValue = getPipValueUSD(pair, entry);
   const effectiveStopPips = effectiveStop / getPipSize(pair);
   const units = Math.floor(riskAmount / (effectiveStopPips * pipValue));
@@ -239,6 +241,16 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const configuredRiskPercent = Number(config.risk_percent);
+    const riskPercent = Number.isFinite(configuredRiskPercent) && configuredRiskPercent > 0
+      ? configuredRiskPercent
+      : RISK_PERCENT;
+    const configuredMaxConcurrent = Number(config.max_concurrent_trades);
+    const maxConcurrentTrades = Number.isFinite(configuredMaxConcurrent) && configuredMaxConcurrent > 0
+      ? Math.min(MAX_CONCURRENT, Math.floor(configuredMaxConcurrent))
+      : MAX_CONCURRENT;
+    const maxTotalRisk = Math.max(riskPercent, Math.min(MAX_TOTAL_RISK, maxConcurrentTrades * riskPercent));
 
 
     // 3. Daily / weekly circuit breakers
@@ -293,14 +305,29 @@ serve(async (req) => {
       }
 
       // Close trades in DB that OANDA no longer has open
-      const { data: dbOpenTrades } = await supabase.from("trades")
-        .select("id, broker_trade_id")
+        const { data: dbOpenTrades } = await supabase.from("trades")
+          .select("id, broker_trade_id, created_at, signal_reason")
         .eq("status", "open")
         .not("broker_trade_id", "is", null);
 
       if (dbOpenTrades) {
         const oandaIds = new Set(oandaOpenTrades.map((t: any) => t.id));
+          const syncTimestamp = new Date().toISOString();
         for (const dbt of dbOpenTrades) {
+            if (!dbt.broker_trade_id) {
+              const ageMs = Date.now() - new Date(dbt.created_at).getTime();
+              if (ageMs >= ORPHAN_TRADE_GRACE_MS) {
+                const orphanReason = dbt.signal_reason
+                  ? `${dbt.signal_reason} | Auto-closed orphaned trade row (missing broker trade ID).`
+                  : "Auto-closed orphaned trade row (missing broker trade ID).";
+
+                await supabase.from("trades")
+                  .update({ status: "closed", closed_at: syncTimestamp, updated_at: syncTimestamp, signal_reason: orphanReason })
+                  .eq("id", dbt.id);
+              }
+              continue;
+            }
+
           if (dbt.broker_trade_id && !oandaIds.has(dbt.broker_trade_id)) {
             let finalPL = 0;
             try {
@@ -359,17 +386,18 @@ serve(async (req) => {
     }
 
     // Max concurrent check
-    if (openPositions.length >= MAX_CONCURRENT) {
+    if (openPositions.length >= maxConcurrentTrades) {
       await supabase.from("bot_config").update({
         last_scan_at: new Date().toISOString(), updated_at: new Date().toISOString(),
       }).eq("id", config.id);
-      return new Response(JSON.stringify({ status: "max_concurrent_reached", open: openPositions.length }), {
+      return new Response(JSON.stringify({ status: "max_concurrent_reached", open: openPositions.length, max_concurrent: maxConcurrentTrades }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     // Correlation filter: count USD-correlated open trades
     const usdCorrelatedOpen = openPositions.filter(t => USD_CORRELATED.has(t.instrument || "")).length;
+    let plannedUsdCorrelated = 0;
 
     // 9. Fetch candles (H1 with 210 bars for SMA200 + buffer) and evaluate each pair
     const results: any[] = [];
@@ -388,6 +416,17 @@ serve(async (req) => {
         continue;
       }
 
+      if (USD_CORRELATED.has(pair) && usdCorrelatedOpen + plannedUsdCorrelated >= MAX_USD_CORRELATED) {
+        results.push({ pair, executed: false, reason: "usd_correlation_cap" });
+        continue;
+      }
+
+      const currentExposureCount = openPositions.length + signals.length;
+      if (currentExposureCount >= maxConcurrentTrades) {
+        results.push({ pair, executed: false, reason: "max_concurrent_planned" });
+        continue;
+      }
+
       const p = prices[pair];
       if (!p) { results.push({ pair, executed: false, reason: "no_price" }); continue; }
 
@@ -398,20 +437,21 @@ serve(async (req) => {
         continue;
       }
 
-      const result = evaluatePair(pair, candles, p.bid, p.ask, p.spread, equity);
+      const result = evaluatePair(pair, candles, p.bid, p.ask, p.spread, equity, riskPercent);
       if (!result.signal) {
         results.push({ pair, executed: false, reason: result.reason });
         continue;
       }
 
       // Total risk check
-      const currentRisk = openPositions.length * RISK_PERCENT;
-      if (currentRisk + RISK_PERCENT > MAX_TOTAL_RISK) {
+      const currentRisk = currentExposureCount * riskPercent;
+      if (currentRisk + riskPercent > maxTotalRisk) {
         results.push({ pair, executed: false, reason: "total_risk_cap" });
         continue;
       }
 
       signals.push(result.signal);
+      if (USD_CORRELATED.has(pair)) plannedUsdCorrelated += 1;
     }
 
     // 10. Execute signals
@@ -444,19 +484,32 @@ serve(async (req) => {
 
         const fill = orderResult.orderFillTransaction;
         if (fill) {
-          const riskAmount = equity * RISK_PERCENT / 100;
+          const fillPrice = parseFloat(fill.price || "0");
+          const riskAmount = equity * riskPercent / 100;
+          const openedTradeId = fill.tradeOpened?.tradeID || null;
+          const tradeClosedImmediately = !openedTradeId;
+          const realizedPL = parseFloat(fill.pl || "0");
+          const tradeStatus = tradeClosedImmediately ? "closed" : "open";
+          const closedAt = tradeClosedImmediately ? new Date().toISOString() : null;
+          const signalReason = tradeClosedImmediately
+            ? `${signal.reasoning} | Filled without a persistent broker trade ID; recorded as closed to avoid stale open positions.`
+            : signal.reasoning;
+
           const { data: trade } = await supabase.from("trades").insert({
             pair: INSTRUMENTS[signal.pair] || signal.pair,
             direction: signal.direction,
-            entry_price: parseFloat(fill.price || "0"),
-            stake: Math.abs(signal.units) * parseFloat(fill.price || "0"),
-            status: "open", broker: "oanda",
+            entry_price: fillPrice,
+            exit_price: tradeClosedImmediately ? fillPrice : null,
+            stake: Math.abs(signal.units) * fillPrice,
+            status: tradeStatus, broker: "oanda",
             broker_order_id: fill.orderID,
-            broker_trade_id: fill.tradeOpened?.tradeID || null,
+            broker_trade_id: openedTradeId,
             instrument: signal.pair, units: signedUnits,
             stop_loss: signal.stopLoss, take_profit: signal.takeProfit,
             broker_payload: orderResult,
-            signal_reason: signal.reasoning,
+            signal_reason: signalReason,
+            profit_loss: tradeClosedImmediately ? realizedPL : 0,
+            closed_at: closedAt,
           }).select().single();
 
           if (savedSignal && trade) {
@@ -469,7 +522,7 @@ serve(async (req) => {
           results.push({
             pair: signal.pair, executed: true, direction: signal.direction,
             units: signal.units, risk_amount: riskAmount,
-            sl: signal.stopLoss, tp: signal.takeProfit, atr: signal.atr,
+            sl: signal.stopLoss, tp: signal.takeProfit, atr: signal.atr, status: tradeStatus,
           });
         } else {
           results.push({ pair: signal.pair, executed: false, reason: orderResult.orderRejectTransaction?.rejectReason || "no_fill" });
@@ -491,7 +544,7 @@ serve(async (req) => {
       status: "scan_complete",
       strategy: "trend_pullback_atr",
       account: { balance: realBalance, equity, open_trades: openPositions.length, unrealized_pl: unrealizedPL },
-      risk_config: { risk_percent: RISK_PERCENT, max_total: MAX_TOTAL_RISK, max_concurrent: MAX_CONCURRENT },
+      risk_config: { risk_percent: riskPercent, max_total: maxTotalRisk, max_concurrent: maxConcurrentTrades },
       circuit_breakers: { daily_loss_r: dailyLossR, weekly_loss_r: weeklyLossR, consecutive_losses: consecutiveLosses },
       results,
       scanned_at: new Date().toISOString(),
