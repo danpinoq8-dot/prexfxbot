@@ -19,16 +19,29 @@ const IntelligenceVault = () => {
       if (configRes.data) setBalance(Number(configRes.data.balance));
     };
     fetchData();
+
+    const channel = supabase
+      .channel("intelligence-vault-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "trades" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "bot_config" }, () => fetchData())
+      .subscribe();
+
+    const interval = setInterval(fetchData, 10000);
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const openTrades = trades.filter(t => t.status === "open");
   const closedTrades = trades.filter(t => t.status === "closed");
-  const wins = closedTrades.filter(t => (t.profit_loss || 0) > 0).length;
-  const losses = closedTrades.filter(t => (t.profit_loss || 0) < 0).length;
+  const wins = closedTrades.filter(t => Number(t.profit_loss || 0) > 0).length;
+  const losses = closedTrades.filter(t => Number(t.profit_loss || 0) < 0).length;
   const winRate = closedTrades.length > 0 ? ((wins / closedTrades.length) * 100).toFixed(1) : "—";
-  const totalPnl = trades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
-  const openPnl = openTrades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
-  const closedPnl = closedTrades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
+  const totalPnl = trades.reduce((sum, t) => sum + Number(t.profit_loss || 0), 0);
+  const openPnl = openTrades.reduce((sum, t) => sum + Number(t.profit_loss || 0), 0);
+  const closedPnl = closedTrades.reduce((sum, t) => sum + Number(t.profit_loss || 0), 0);
   const filteredTrades = filter === "all" ? trades : filter === "open" ? openTrades : closedTrades;
 
   const metrics = [
@@ -67,7 +80,7 @@ const IntelligenceVault = () => {
         <div className="space-y-3">
           {filteredTrades.length === 0 && <p className="text-[9px] text-muted-foreground italic">No trades in this category</p>}
           {filteredTrades.map((t) => {
-            const pl = t.profit_loss || 0;
+            const pl = Number(t.profit_loss || 0);
             const isWin = pl > 0;
             const isOpen = t.status === "open";
             return (
