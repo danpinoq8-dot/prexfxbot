@@ -182,14 +182,14 @@ function evaluatePair(
   const isBearish = price < sma200;
   if (!isBullish && !isBearish) return null;
 
-  // Rule 2 — Pullback Condition: price retraced 0.5-1.5 ATR toward EMA20
+  // Rule 2 — Pullback Condition: price retraced 0.2-2.5 ATR toward EMA20
   const distToEma = Math.abs(price - ema20);
   if (distToEma < PULLBACK_MIN_ATR * atr || distToEma > PULLBACK_MAX_ATR * atr) return null;
 
-  // For a valid pullback: in bullish trend, price should be near/above EMA20 (pulled back toward it)
-  // In bearish trend, price should be near/below EMA20
-  if (isBullish && price < ema20 - atr * 0.1) return null; // too deep
-  if (isBearish && price > ema20 + atr * 0.1) return null; // too deep
+  // For a valid pullback: in bullish trend, price should not be too far below EMA20
+  // In bearish trend, price should not be too far above EMA20
+  if (isBullish && price < ema20 - atr * 0.5) return null;
+  if (isBearish && price > ema20 + atr * 0.5) return null;
 
   // Rule 3 — Entry Trigger: strong momentum candle
   const body = Math.abs(last.c - last.o);
