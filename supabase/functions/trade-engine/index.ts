@@ -398,20 +398,20 @@ serve(async (req) => {
         continue;
       }
 
-      const signal = evaluatePair(pair, candles, p.bid, p.ask, p.spread, equity);
-      if (!signal) {
-        results.push({ pair, executed: false, reason: "no_setup" });
+      const result = evaluatePair(pair, candles, p.bid, p.ask, p.spread, equity);
+      if (!result.signal) {
+        results.push({ pair, executed: false, reason: result.reason });
         continue;
       }
 
-      // Total risk check: each open trade ≈ 0.1% risk
+      // Total risk check
       const currentRisk = openPositions.length * RISK_PERCENT;
       if (currentRisk + RISK_PERCENT > MAX_TOTAL_RISK) {
         results.push({ pair, executed: false, reason: "total_risk_cap" });
         continue;
       }
 
-      signals.push(signal);
+      signals.push(result.signal);
     }
 
     // 10. Execute signals
