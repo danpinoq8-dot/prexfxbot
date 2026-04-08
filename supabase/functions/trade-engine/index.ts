@@ -257,25 +257,20 @@ serve(async (req) => {
     const dailyLossR = Number(config.daily_loss_r || 0);
     const weeklyLossR = Number(config.weekly_loss_r || 0);
     const consecutiveLosses = Number(config.consecutive_losses || 0);
+    let blockingStatus: Record<string, unknown> | null = null;
 
     if (dailyLossR >= MAX_DAILY_LOSS_R || consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
-      return new Response(JSON.stringify({ status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      blockingStatus = { status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses };
     }
-    if (weeklyLossR >= MAX_WEEKLY_LOSS_R) {
-      return new Response(JSON.stringify({ status: "weekly_halt", weekly_loss_r: weeklyLossR }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!blockingStatus && weeklyLossR >= MAX_WEEKLY_LOSS_R) {
+      blockingStatus = { status: "weekly_halt", weekly_loss_r: weeklyLossR };
     }
 
     // 4. Trade spacing: 5 min since last trade
-    if (config.last_trade_at) {
+    if (!blockingStatus && config.last_trade_at) {
       const elapsed = Date.now() - new Date(config.last_trade_at).getTime();
       if (elapsed < TRADE_SPACING_MS) {
-        return new Response(JSON.stringify({ status: "trade_spacing", seconds_remaining: Math.ceil((TRADE_SPACING_MS - elapsed) / 1000) }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        blockingStatus = { status: "trade_spacing", seconds_remaining: Math.ceil((TRADE_SPACING_MS - elapsed) / 1000) };
       }
     }
 
@@ -307,8 +302,7 @@ serve(async (req) => {
       // Close trades in DB that OANDA no longer has open
         const { data: dbOpenTrades } = await supabase.from("trades")
           .select("id, broker_trade_id, created_at, signal_reason")
-        .eq("status", "open")
-        .not("broker_trade_id", "is", null);
+          .eq("status", "open");
 
       if (dbOpenTrades) {
         const oandaIds = new Set(oandaOpenTrades.map((t: any) => t.id));
@@ -361,6 +355,16 @@ serve(async (req) => {
       }
     } catch (e) {
       console.error("Trade sync error:", e);
+    }
+
+    if (blockingStatus) {
+      await supabase.from("bot_config").update({
+        last_scan_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", config.id);
+
+      return new Response(JSON.stringify(blockingStatus), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // 7. Get prices
