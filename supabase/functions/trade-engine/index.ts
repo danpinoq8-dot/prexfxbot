@@ -158,8 +158,8 @@ function evaluatePair(
   candles: { o: number; h: number; l: number; c: number }[],
   bid: number, ask: number, spread: number,
   equity: number
-): TradeSignal | null {
-  if (candles.length < SMA_PERIOD + 1) return null;
+): { signal: TradeSignal | null; rejectReason: string } {
+  if (candles.length < SMA_PERIOD + 1) return { signal: null, rejectReason: "insufficient_candles" };
 
   const sma200 = calcSMA(candles, SMA_PERIOD);
   const ema20 = calcEMA(candles, EMA_PERIOD);
