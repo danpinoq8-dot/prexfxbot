@@ -221,6 +221,15 @@ function evaluatePair(
   };
 }
 
+
+function getISOWeek(d: Date): number {
+  const date = new Date(d.getTime());
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -258,6 +267,28 @@ serve(async (req) => {
     const weeklyLossR = Number(config.weekly_loss_r || 0);
     const consecutiveLosses = Number(config.consecutive_losses || 0);
     let blockingStatus: Record<string, unknown> | null = null;
+
+
+    // Auto-reset daily/weekly counters
+    if (config.last_scan_at) {
+      const lastDate = new Date(config.last_scan_at).toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
+      if (lastDate < today) {
+        await supabase.from("bot_config").update({
+          daily_loss_r: 0, consecutive_losses: 0
+        }).eq("id", config.id);
+        console.log(`Daily counters auto-reset (was daily_r=${dailyLossR}, consec=${consecutiveLosses})`);
+        // Use fresh values for this scan
+        const freshDailyLossR = 0;
+        const freshConsecutiveLosses = 0;
+      }
+      const lastWeek = getISOWeek(new Date(config.last_scan_at));
+      const thisWeek = getISOWeek(new Date());
+      if (lastWeek < thisWeek || new Date(config.last_scan_at).getFullYear() < new Date().getFullYear()) {
+        await supabase.from("bot_config").update({ weekly_loss_r: 0 }).eq("id", config.id);
+        console.log(`Weekly counter auto-reset (was ${weeklyLossR})`);
+      }
+    }
 
     if (dailyLossR >= MAX_DAILY_LOSS_R || consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
       blockingStatus = { status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses };
