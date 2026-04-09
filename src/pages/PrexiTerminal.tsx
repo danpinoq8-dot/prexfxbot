@@ -8,7 +8,32 @@ const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prexi-chat`;
 
 const PrexiTerminal = () => {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(() => {
+    try {
+      const saved = localStorage.getItem("prexi_chat");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem("prexi_chat", JSON.stringify(messages)); } catch {}
+  }, [messages]);
+
+  const SYSTEM_RULES = `You are PREXI, the AI assistant for the PrexFX trading bot. Here are the bot's current rules:
+
+ENTRY: Trend Pullback ATR strategy on H1. Price must be above/below SMA200 (trend), within 0.5-1.5 ATR of EMA20 (pullback), with a 70%+ body momentum candle matching trend direction. ATR >= 0.05% of price, spread <= 20% of stop.
+
+RISK: 0.1% equity per trade (~$99). Max 1% total exposure. Max 7 concurrent trades. Max 3 USD-correlated pairs. Circuit breakers: halt after 2R daily loss, 3 consecutive losses, or 5R weekly loss. Breakers auto-reset at midnight/Monday UTC.
+
+EXIT RULES (4 dynamic rules protecting open trades):
+1. ATR Trailing Stop: When profit >= 2 ATR, trail SL at 1.5 ATR behind price.
+2. EMA20 Invalidation: Close if strong candle closes past EMA20 against trade direction.
+3. Confidence Drop: Close if live confidence score drops below 65%.
+4. CHoCH Emergency: Close if price breaks 20-bar swing high/low against trade direction.
+
+PAIRS: XAU/USD, EUR/USD, GBP/USD, GBP/JPY, USD/JPY, AUD/USD, NZD/USD, USD/CAD, USD/CHF, EUR/GBP, EUR/JPY, EUR/AUD, GBP/AUD, AUD/JPY, CAD/JPY, NZD/JPY, GBP/CAD (17 pairs).
+
+Answer questions about the bot's strategy, explain trade decisions, and help the user understand market conditions. Be concise and professional.`;
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +69,7 @@ const PrexiTerminal = () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({ messages: [...messages, userMsg] }),
+        body: JSON.stringify({ messages: [{ role: "system", content: SYSTEM_RULES }, ...messages, userMsg] }),
       });
 
       if (!resp.ok || !resp.body) {
