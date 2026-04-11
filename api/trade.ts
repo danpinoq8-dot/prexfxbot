@@ -1,11 +1,31 @@
 export const config = { runtime: "edge" };
 export default async function handler(req: Request) {
-  const body = req.method === "POST" ? await req.json() : { run_scan: true };
-  const res = await fetch("https://runtime.codewords.ai/run/prexfx_exit_engine_0e1de2be", {
+  const AW_ENDPOINT = process.env.APPWRITE_FUNCTION_URL;
+  const AW_PROJECT = process.env.VITE_APPWRITE_PROJECT_ID;
+  const AW_KEY = process.env.VITE_APPWRITE_API_KEY;
+
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
+    });
+  }
+
+  if (!AW_ENDPOINT || !AW_PROJECT || !AW_KEY) {
+    return new Response(JSON.stringify({ error: "Appwrite env vars not configured" }), {
+      status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+
+  const res = await fetch(AW_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": "Bearer cwk-cffb2da4746913670632b627b01d497bba3b46d9f4953e1fb55f796b87ff739e" },
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", "X-Appwrite-Project": AW_PROJECT, "X-Appwrite-Key": AW_KEY },
+    body: JSON.stringify({ async: false }),
   });
-  const data = await res.text();
-  return new Response(data, { status: res.status, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+
+  const data = await res.json();
+  const body = data.responseBody || JSON.stringify(data);
+  return new Response(body, {
+    status: data.responseStatusCode || res.status,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+  });
 }
