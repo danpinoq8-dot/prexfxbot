@@ -279,6 +279,8 @@ serve(async (req) => {
         }).eq("id", config.id);
         console.log(`Daily counters auto-reset (was daily_r=${dailyLossR}, consec=${consecutiveLosses})`);
         // Use fresh values for this scan
+        dailyLossR = 0;
+        consecutiveLosses = 0;
         const freshDailyLossR = 0;
         const freshConsecutiveLosses = 0;
       }
@@ -287,15 +289,18 @@ serve(async (req) => {
       if (lastWeek < thisWeek || new Date(config.last_scan_at).getFullYear() < new Date().getFullYear()) {
         await supabase.from("bot_config").update({ weekly_loss_r: 0 }).eq("id", config.id);
         console.log(`Weekly counter auto-reset (was ${weeklyLossR})`);
+        weeklyLossR = 0;
       }
     }
 
-    if (dailyLossR >= MAX_DAILY_LOSS_R || consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
-      blockingStatus = { status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses };
-    }
-    if (!blockingStatus && weeklyLossR >= MAX_WEEKLY_LOSS_R) {
-      blockingStatus = { status: "weekly_halt", weekly_loss_r: weeklyLossR };
-    }
+    // DISABLED: Loss-based circuit breaker removed per user request
+    // if (dailyLossR >= MAX_DAILY_LOSS_R || consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
+    //   blockingStatus = { status: "daily_circuit_breaker", daily_loss_r: dailyLossR, consecutive_losses: consecutiveLosses };
+    // }
+    // DISABLED: Weekly loss halt removed per user request
+    // if (!blockingStatus && weeklyLossR >= MAX_WEEKLY_LOSS_R) {
+    //   blockingStatus = { status: "weekly_halt", weekly_loss_r: weeklyLossR };
+    // }
 
     // 4. Trade spacing: 5 min since last trade
     if (!blockingStatus && config.last_trade_at) {
