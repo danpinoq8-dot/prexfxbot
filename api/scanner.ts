@@ -1,31 +1,45 @@
 export const config = { runtime: "edge" };
+
 export default async function handler(req: Request) {
-  const AW_ENDPOINT = process.env.APPWRITE_FUNCTION_URL;
-  const AW_PROJECT = process.env.VITE_APPWRITE_PROJECT_ID;
-  const AW_KEY = process.env.VITE_APPWRITE_API_KEY;
+  const SB_URL = process.env.VITE_SUPABASE_URL;
+  const SB_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
   if (req.method === "OPTIONS") {
     return new Response(null, {
-      headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" }
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
     });
   }
 
-  if (!AW_ENDPOINT || !AW_PROJECT || !AW_KEY) {
-    return new Response(JSON.stringify({ error: "Appwrite env vars not configured" }), {
-      status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-    });
+  if (!SB_URL || !SB_KEY) {
+    return new Response(
+      JSON.stringify({ error: "Supabase env vars not configured" }),
+      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
   }
 
-  const res = await fetch(AW_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Appwrite-Project": AW_PROJECT, "X-Appwrite-Key": AW_KEY },
-    body: JSON.stringify({ async: false }),
-  });
+  try {
+    const res = await fetch(`${SB_URL}/functions/v1/market-scanner`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SB_KEY}`,
+      },
+      body: JSON.stringify({}),
+    });
 
-  const data = await res.json();
-  const body = data.responseBody || JSON.stringify(data);
-  return new Response(body, {
-    status: data.responseStatusCode || res.status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-  });
+    const data = await res.text();
+    return new Response(data, {
+      status: res.status,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ error: e.message || "Scanner proxy error" }),
+      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
+  }
 }
