@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-const CHAT_URL = "/api/chat";
+const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/prexi-chat`;
 
 const PrexiTerminal = () => {
   const [input, setInput] = useState("");
@@ -69,7 +69,7 @@ Answer questions about the bot's strategy, explain trade decisions, and help the
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({ messages: [{ role: "system", content: SYSTEM_RULES }, ...messages, userMsg] }),
+        body: JSON.stringify({ messages: [...messages, userMsg] }),
       });
 
       if (!resp.ok || !resp.body) {
