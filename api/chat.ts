@@ -1,45 +1,55 @@
 export const config = { runtime: "edge" };
 
 export default async function handler(req: Request) {
+  const SB_URL = process.env.VITE_SUPABASE_URL;
+  const SB_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
   if (req.method === "OPTIONS") {
     return new Response(null, {
-      headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey" }
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, apikey",
+      },
     });
   }
 
-  const CEREBRAS_KEY = process.env.CEREBRAS_API_KEY;
-  if (!CEREBRAS_KEY) {
-    return new Response(JSON.stringify({ error: "CEREBRAS_API_KEY not configured" }), {
-      status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-    });
+  if (!SB_URL || !SB_KEY) {
+    return new Response(
+      JSON.stringify({ error: "Supabase env vars not configured" }),
+      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
   }
 
   try {
-    const body = await req.json();
-    const messages = body.messages || [];
+    const body = await req.text();
 
-    const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+    // Forward to Supabase prexi-chat function
+    // Handles: SSE streaming, Cerebras llama3.1-8b, live context enrichment
+    const res = await fetch(`${SB_URL}/functions/v1/prexi-chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${CEREBRAS_KEY}` },
-      body: JSON.stringify({ model: "llama-4-scout-17b-16e-instruct", messages, max_tokens: 2048, temperature: 0.7 }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SB_KEY}`,
+      },
+      body,
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      return new Response(JSON.stringify({ error: errText }), {
-        status: res.status, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-      });
-    }
-
-    const data = await res.json();
-    const reply = data.choices?.[0]?.message?.content || "No response from PREXI Brain.";
-
-    return new Response(JSON.stringify({ reply }), {
-      status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    // Pipe the SSE stream straight through to the frontend
+    return new Response(res.body, {
+      status: res.status,
+      headers: {
+        "Content-Type":
+          res.headers.get("Content-Type") || "text/event-stream",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+      },
     });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-    });
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ error: e.message || "Chat proxy error" }),
+      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
   }
 }
